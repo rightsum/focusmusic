@@ -138,7 +138,7 @@ class SpotifyAPIClient {
 
     private func searchPlaylists(query: String, token: String) -> String? {
         let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let url = URL(string: "https://api.spotify.com/v1/search?q=\(encodedQuery)&type=playlist&limit=1")!
+        let url = URL(string: "https://api.spotify.com/v1/search?q=\(encodedQuery)&type=playlist&limit=5")!
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
@@ -151,18 +151,35 @@ class SpotifyAPIClient {
                 semaphore.signal()
                 return
             }
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let playlists = json["playlists"] as? [String: Any],
-                  let items = playlists["items"] as? [[String: Any]],
-                  let first = items.first,
-                  let uri = first["uri"] as? String else {
-                Logger.shared.log("Spotify search: no results")
+            guard let data = data else {
+                Logger.shared.log("Spotify search: no data")
                 semaphore.signal()
                 return
             }
-            Logger.shared.log("Spotify search: found \(uri)")
-            result = uri
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                Logger.shared.log("Spotify search: bad JSON")
+                semaphore.signal()
+                return
+            }
+            // Debug: log raw total and first few item types
+            if let playlists = json["playlists"] as? [String: Any] {
+                let total = playlists["total"] as? Int ?? -1
+                let rawItems = playlists["items"] as? [Any] ?? []
+                let nonNullCount = rawItems.compactMap({ $0 as? [String: Any] }).count
+                Logger.shared.log("Spotify search: total=\(total), items=\(rawItems.count), valid=\(nonNullCount)")
+                if let first = rawItems.compactMap({ $0 as? [String: Any] }).first,
+                   let uri = first["uri"] as? String {
+                    Logger.shared.log("Spotify search: found \(uri)")
+                    result = uri
+                } else {
+                    Logger.shared.log("Spotify search: no valid results")
+                }
+            } else {
+                Logger.shared.log("Spotify search: no playlists key")
+                if let errorObj = json["error"] as? [String: Any] {
+                    Logger.shared.log("Spotify search API error: \(errorObj)")
+                }
+            }
             semaphore.signal()
         }
         task.resume()
@@ -313,6 +330,9 @@ class SpotifyBackend: NSObject, MusicBackend {
     }
 
     func play() {
+        // Reload config to pick up edits made while disconnected
+        config = ConfigManager.shared.load()
+
         // On headphone connect, user WANTS music to start.
         // If app is closed, open it. Only skip if we're in a background loop
         // (e.g. mic-poll resume) and user intentionally closed it.
@@ -484,6 +504,9 @@ class YouTubeMusicBackend: NSObject, MusicBackend {
     }
 
     func play() {
+        // Reload config to pick up edits made while disconnected
+        config = ConfigManager.shared.load()
+
         // On headphone connect, user WANTS music to start.
         // If app is closed, open it. Only skip on background pause/stop.
         if !isAppRunning() {
@@ -612,6 +635,7 @@ class FocusMusicController: NSObject {
     }
 
     func createBackend() {
+        config = ConfigManager.shared.load()
         switch config.source {
         case .local:
             let folder = config.musicFolder.map { URL(fileURLWithPath: $0) }
@@ -887,6 +911,7 @@ class FocusMusicController: NSObject {
     }
 
     func checkOutputDevice() {
+        config = ConfigManager.shared.load()
         let deviceID = getDefaultOutputDeviceID()
         let name = getDeviceName(deviceID: deviceID)
         if name == lastDeviceName { return }
