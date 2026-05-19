@@ -32,27 +32,31 @@ FocusMusic is a lightweight native macOS agent that:
 | Source | How it works | Media keys |
 |--------|-------------|------------|
 | **Local Files** | Plays `.mp3`/`.m4a`/`.wav`/`.flac` from `~/Music/Focus` via `AVAudioPlayer` | Via `MPRemoteCommandCenter` |
-| **Spotify** | Controls Spotify via AppleScript (`play`, `pause`, `next track`) | Routed through FocusMusic to Spotify |
+| **Spotify** | Controls Spotify via AppleScript + optional Web API for search | Routed through FocusMusic to Spotify |
 | **YouTube Music** | Activates the app + simulates keyboard shortcuts via AppleScript/System Events | Routed through FocusMusic to YouTube Music |
 
 ### Spotify mode
 
 Requires the **Spotify desktop app** to be installed. FocusMusic sends AppleScript commands to control playback, reads the current track name, and detects play/pause state directly from Spotify.
 
-You can optionally define a **specific playlist/album/track** via `spotifyUri` in the config. When headphones connect, FocusMusic opens that URI and starts playing it.
+You can configure:
+- **`spotifyUri`** — open a specific playlist/album/track on connect
+- **`spotifySearchQuery`** — search for a term. Without API credentials, it opens the search page. With credentials, it **auto-plays the first playlist result**.
 
 ### YouTube Music mode
 
-Requires the official **YouTube Music Mac app** from the App Store. FocusMusic uses AppleScript to activate the app and simulate keyboard shortcuts:
+Requires the official **YouTube Music Mac app** from the App Store (or Chrome PWA). FocusMusic uses AppleScript to activate the app and simulate keyboard shortcuts:
 - **Spacebar** — play/pause
 - **Shift+N** — next track
 - **Shift+P** — previous track
 
-You can optionally define a **specific playlist/album URL** via `youtubeMusicUrl` in the config. When headphones connect, FocusMusic opens that URL in the YouTube Music app.
+You can configure:
+- **`youtubeMusicUrl`** — open a specific playlist/album URL on connect
+- **`youtubeMusicSearchQuery`** — open the YouTube Music search page for a term
 
 > ⚠️ **YouTube Music requires Accessibility permissions** for `System Events` key simulation. macOS will prompt you the first time. If it doesn't work, go to **System Settings → Privacy & Security → Accessibility** and add `FocusMusic`.
 
-> ⚠️ YouTube Music state tracking is best-effort (we can't query its playback state via AppleScript). If commands feel out of sync, pause/resume manually once.
+> ⚠️ YouTube Music state tracking is best-effort. If commands feel out of sync, pause/resume manually once.
 
 ## Installation
 
@@ -103,7 +107,11 @@ Your choice is saved to `~/.focusmusic.json` and persists across restarts.
   "musicFolder": "/Users/rightsum/Music/Focus",
   "shuffle": true,
   "spotifyUri": null,
-  "youtubeMusicUrl": null
+  "spotifySearchQuery": null,
+  "spotifyClientId": null,
+  "spotifyClientSecret": null,
+  "youtubeMusicUrl": null,
+  "youtubeMusicSearchQuery": null
 }
 ```
 
@@ -113,11 +121,15 @@ Your choice is saved to `~/.focusmusic.json` and persists across restarts.
 | `musicFolder` | Path to local music folder (local mode only) |
 | `shuffle` | Shuffle tracks on load (local mode only) |
 | `spotifyUri` | Spotify URI to open on connect, e.g. `spotify:playlist:37i9dQZF1DX4wta20PHgwo` |
-| `youtubeMusicUrl` | YouTube Music URL to open on connect, e.g. `https://music.youtube.com/playlist?list=...` |
+| `spotifySearchQuery` | Search term, e.g. `"focus music"`. With API creds: auto-plays first playlist. Without: opens search page. |
+| `spotifyClientId` | Spotify Web API Client ID (optional, free, from developer.spotify.com) |
+| `spotifyClientSecret` | Spotify Web API Client Secret (optional) |
+| `youtubeMusicUrl` | YouTube Music URL to open on connect, e.g. `https://music.youtube.com/playlist?list=PL...` |
+| `youtubeMusicSearchQuery` | Search term, e.g. `"lofi hip hop"`. Opens search page on connect. |
 
 Edit this file directly or switch sources from the menu bar.
 
-### 🎵 Spotify Playlist / Album
+### 🎵 Spotify: Specific Playlist / Album / Track
 
 Find any playlist on Spotify, click **Share → Copy Spotify URI**, then paste it into your config:
 
@@ -135,7 +147,49 @@ When you connect your headphones, FocusMusic will:
 
 You can also use album URIs (`spotify:album:...`) or track URIs (`spotify:track:...`).
 
-### 🎵 YouTube Music Playlist
+### 🔍 Spotify: Search (Open Search Page — no API)
+
+Just set a search query:
+
+```json
+{
+  "source": "spotify",
+  "spotifySearchQuery": "focus music"
+}
+```
+
+When headphones connect, Spotify opens to search results for `"focus music"`. You click the first playlist and it starts playing. No API setup needed.
+
+### 🤖 Spotify: Search (Auto-Play First Result — with API)
+
+For true "search and auto-play the first playlist", you need Spotify API credentials (free, no credit card):
+
+1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+2. Log in with your Spotify account
+3. Click **Create App**
+4. Name it `FocusMusic`, description `Personal music automation`
+5. Check the boxes, click **Save**
+6. Copy **Client ID** and **Client Secret**
+7. Paste them into your config:
+
+```json
+{
+  "source": "spotify",
+  "spotifySearchQuery": "focus music",
+  "spotifyClientId": "your-client-id-here",
+  "spotifyClientSecret": "your-client-secret-here"
+}
+```
+
+Now when headphones connect:
+1. FocusMusic fetches a token from Spotify
+2. Searches for `"focus music"` playlists
+3. Gets the first result's URI
+4. Opens it in Spotify and hits **play**
+
+All automatically — no clicking required.
+
+### 🎵 YouTube Music: Specific Playlist
 
 Find a playlist on YouTube Music, copy its URL, then paste it into your config:
 
@@ -146,17 +200,37 @@ Find a playlist on YouTube Music, copy its URL, then paste it into your config:
 }
 ```
 
-When you connect your headphones, FocusMusic will open that URL directly in the YouTube Music app. You'll need to hit play manually the first time (the app doesn't support auto-play on URL open), but after that, media keys and call detection work normally.
+When you connect your headphones, FocusMusic opens that URL directly in the YouTube Music app. You'll need to hit play manually the first time (the app doesn't support auto-play on URL open), but after that, media keys and call detection work normally.
 
-If you leave `youtubeMusicUrl` as `null`, it simply resumes whatever was last playing.
+### 🔍 YouTube Music: Search
 
-### Uninstall
+Set a search query:
 
-```bash
-./uninstall.sh
+```json
+{
+  "source": "youtubeMusic",
+  "youtubeMusicSearchQuery": "lofi hip hop"
+}
 ```
 
-This removes the binary, config, and LaunchAgent.
+When headphones connect, YouTube Music opens to search results for `"lofi hip hop"`. You click the first playlist and start playing.
+
+> ⚠️ YouTube Music has no public API for auto-playing search results. The search page approach is the best we can do without third-party tools.
+
+### Priority Order
+
+Each backend checks in this order:
+
+**Spotify:**
+1. `spotifyUri` — explicit playlist/album/track
+2. `spotifySearchQuery` + API credentials — search & auto-play first result
+3. `spotifySearchQuery` — open search page
+4. Nothing — resume whatever was last playing
+
+**YouTube Music:**
+1. `youtubeMusicUrl` — explicit playlist/album
+2. `youtubeMusicSearchQuery` — open search page
+3. Nothing — resume with spacebar
 
 ## How It Works
 
@@ -196,9 +270,10 @@ If another app (Spotify, Apple Music) recently played and is still the system's 
 
 ```
 .
-├── main.swift          # Complete Swift source (~750 lines)
+├── main.swift          # Complete Swift source (~900 lines)
 ├── install.sh          # Build + install + LaunchAgent setup
 ├── uninstall.sh        # Clean removal
+├── grant-accessibility.sh  # Helper for Accessibility permissions
 ├── build/              # Compiled binary
 ├── assets/             # Screenshots
 ├── .pi/                # Pi agent development context
@@ -243,8 +318,8 @@ ps aux | grep FocusMusic
 - **Session**: `LimitLoadToSessionType: Aqua` ensures menu bar + notifications work in the GUI session
 - **Backends**: Protocol-based (`MusicBackend`) with 3 implementations:
   - `LocalBackend` — `AVAudioPlayer` for direct local-file playback
-  - `SpotifyBackend` — `NSAppleScript` to control Spotify; supports `spotifyUri` for playlist targeting
-  - `YouTubeMusicBackend` — AppleScript `activate` + `System Events` key simulation; supports `youtubeMusicUrl` for playlist targeting; `stop()` is a no-op to avoid reopening a closed app
+  - `SpotifyBackend` — `NSAppleScript` + optional `SpotifyAPIClient` (URLSession + token management) for search auto-play
+  - `YouTubeMusicBackend` — AppleScript `activate` + `System Events` key simulation
 - **Config**: JSON file at `~/.focusmusic.json` read on startup, written on source switch
 - **Notifications**: Legacy `NSUserNotification` (functional but deprecated; migration to `UserNotifications.framework` is a future TODO)
 
@@ -256,6 +331,7 @@ ps aux | grep FocusMusic
 - No volume control from the app itself — use system volume.
 - Local mode has no playlist persistence; reshuffles on every launch.
 - YouTube Music URL open does not auto-play; you need to hit play once after the URL loads.
+- Spotify search auto-play requires free API credentials (one-time setup).
 
 ## License
 
