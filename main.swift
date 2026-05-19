@@ -208,11 +208,19 @@ class SpotifyBackend: NSObject, MusicBackend {
         return result?.stringValue
     }
 
+    private func isAppRunning() -> Bool {
+        let apps = NSWorkspace.shared.runningApplications
+        return apps.contains { $0.localizedName == "Spotify" }
+    }
+
     func play() {
+        guard isAppRunning() else {
+            Logger.shared.log("Spotify: not running, skipping play")
+            return
+        }
         if let uri = config.spotifyUri, !uri.isEmpty {
             Logger.shared.log("Spotify: opening \(uri)")
             _ = runScript("tell application \"Spotify\" to open location \"\(uri)\"")
-            // Give Spotify a moment to load the playlist/album
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                 _ = self?.runScript("tell application \"Spotify\" to play")
                 Logger.shared.log("Spotify: play after URI load")
@@ -224,30 +232,45 @@ class SpotifyBackend: NSObject, MusicBackend {
     }
 
     func pause() {
+        guard isAppRunning() else {
+            Logger.shared.log("Spotify: not running, skipping pause")
+            return
+        }
         _ = runScript("tell application \"Spotify\" to pause")
         Logger.shared.log("Spotify: pause")
     }
 
     func stop() {
-        pause()
+        // No-op: don't reopen a closed app just to pause it
+        Logger.shared.log("Spotify: stopped (no-op, app stays closed)")
     }
 
     func nextTrack() {
+        guard isAppRunning() else {
+            Logger.shared.log("Spotify: not running, skipping next")
+            return
+        }
         _ = runScript("tell application \"Spotify\" to next track")
         Logger.shared.log("Spotify: next")
     }
 
     func previousTrack() {
+        guard isAppRunning() else {
+            Logger.shared.log("Spotify: not running, skipping previous")
+            return
+        }
         _ = runScript("tell application \"Spotify\" to previous track")
         Logger.shared.log("Spotify: previous")
     }
 
     var isPlaying: Bool {
+        guard isAppRunning() else { return false }
         let state = runScript("tell application \"Spotify\" to return player state as string")
         return state?.lowercased() == "playing"
     }
 
     var currentTrackName: String? {
+        guard isAppRunning() else { return nil }
         let name = runScript("tell application \"Spotify\" to return name of current track")
         let artist = runScript("tell application \"Spotify\" to return artist of current track")
         if let n = name, let a = artist {
