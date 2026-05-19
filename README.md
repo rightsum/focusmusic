@@ -46,25 +46,56 @@ The agent calls the MCP tools (`get_status`, `set_spotify_search`, `play`, etc.)
 ### Requirements
 
 - macOS 11+
-- Swift toolchain (`xcode-select --install` if you don't have it)
 - A Spotify account with **Premium** (the Web API only allows playback control on Premium)
 - A free Spotify Developer app (instructions below)
 
-### Install
+### Install (one-liner, no Swift required)
 
 ```bash
-git clone <this repo>
-cd music-app-mac
+curl -fsSL https://raw.githubusercontent.com/rightsum/nik-music/main/install.sh | bash
+```
+
+Downloads the latest universal binary from [Releases](https://github.com/rightsum/nik-music/releases), drops it in `~/.local/bin`, installs a LaunchAgent so it starts at login, and creates `~/.nikmusic.json` with defaults. A 🎵 should appear in your menubar.
+
+### Install manually
+
+Prefer to do it yourself? Head to the [**Releases page**](https://github.com/rightsum/nik-music/releases), download the latest `NikMusic` binary (universal — runs on Apple Silicon and Intel), then:
+
+```bash
+chmod +x ~/Downloads/NikMusic
+xattr -dr com.apple.quarantine ~/Downloads/NikMusic   # Gatekeeper
+mkdir -p ~/.local/bin && mv ~/Downloads/NikMusic ~/.local/bin/
+~/.local/bin/NikMusic &                                # or set up the LaunchAgent yourself
+```
+
+Verify the binary against the `NikMusic.sha256` attached to the same release:
+
+```bash
+shasum -a 256 ~/.local/bin/NikMusic
+```
+
+### Install from source
+
+Requires the Swift toolchain (`xcode-select --install`).
+
+```bash
+git clone https://github.com/rightsum/nik-music.git
+cd nik-music
 ./install.sh
 ```
 
-This builds the binary, drops it in `~/.local/bin`, installs a LaunchAgent so it starts at login, and creates `~/.nikmusic.json` with defaults. A 🎵 should appear in your menubar.
+The same `install.sh` builds locally when run inside a clone.
 
 ### Uninstall
 
 ```bash
-./uninstall.sh
+~/.local/bin/NikMusic --quit 2>/dev/null; \
+launchctl unload ~/Library/LaunchAgents/com.rightsum.nikmusic.plist 2>/dev/null; \
+rm -f ~/Library/LaunchAgents/com.rightsum.nikmusic.plist \
+      ~/.local/bin/NikMusic ~/.nikmusic.json
 ```
+
+Or, if you have the repo: `./uninstall.sh`.
 
 ---
 

@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcrun --show-sdk-path
+
+      - name: Build universal binary
+        run: |
+          mkdir -p build
+          FRAMEWORKS="-framework Cocoa -framework CoreAudio -framework AVFoundation -framework MediaPlayer -framework Network"
+
+          swiftc -O -target arm64-apple-macos11 $FRAMEWORKS \
+            main.swift mcp-server.swift -o build/NikMusic-arm64
+
+          swiftc -O -target x86_64-apple-macos11 $FRAMEWORKS \
+            main.swift mcp-server.swift -o build/NikMusic-x86_64
+
+          lipo -create \
+            build/NikMusic-arm64 build/NikMusic-x86_64 \
+            -output build/NikMusic
+          lipo -info build/NikMusic
+
+      - name: Generate SHA256
+        run: |
+          cd build
+          shasum -a 256 NikMusic > NikMusic.sha256
+          cat NikMusic.sha256
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/NikMusic
+            build/NikMusic.sha256
+            install.sh
+            uninstall.sh
+          generate_release_notes: true
+          body: |
+            ## Install (no Swift required)
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+            ```
+
+            The installer downloads `NikMusic` from this release, drops it in `~/.local/bin`, and registers a LaunchAgent so it starts at login.
+
+            ## Verify the binary
+
+            ```bash
+            shasum -a 256 NikMusic
+            ```
+
+            Compare against `NikMusic.sha256` above.
