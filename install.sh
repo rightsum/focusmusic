@@ -3,11 +3,10 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
-BINARY="$BUILD_DIR/NikMusic"
 
 echo "🔨 Building Nik-Music..."
 mkdir -p "$BUILD_DIR"
-swiftc -framework Cocoa -framework CoreAudio -framework AVFoundation -framework MediaPlayer "$PROJECT_DIR/main.swift" -o "$BINARY"
+swiftc -framework Cocoa -framework CoreAudio -framework AVFoundation -framework MediaPlayer -framework Network "$PROJECT_DIR/main.swift" "$PROJECT_DIR/mcp-server.swift" -o "$BUILD_DIR/NikMusic"
 
 echo "📁 Creating music folder..."
 mkdir -p ~/Music/Focus
@@ -19,7 +18,7 @@ fi
 
 echo "📦 Installing binary to ~/.local/bin..."
 mkdir -p ~/.local/bin
-cp "$BINARY" ~/.local/bin/NikMusic
+cp "$BUILD_DIR/NikMusic" ~/.local/bin/NikMusic
 
 echo "🚀 Installing LaunchAgent..."
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
@@ -62,6 +61,9 @@ echo ""
 echo "🎵 Add music files to: ~/Music/Focus"
 echo "🎧 Plug in your headphones to test it"
 echo "⏯️  Control playback from the menu bar icon"
+echo ""
+echo "🤖 MCP Server: click the menu bar icon → MCP Server → Start MCP Server"
+echo "   Then Copy MCP Config to paste into Claude Desktop or Cursor"
 echo ""
 echo "📱 Switch sources from the menu bar: Local Files / Spotify"
 echo "🛠️  Config file: ~/.nikmusic.json"

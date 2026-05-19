@@ -1,289 +1,213 @@
-# 🎧 Nik-Music
+# Nik-Music
 
-**Nik** (نیک) is a Persian word meaning **"good," "virtuous,"** and **"benevolent."** In Zoroastrianism — one of the world's oldest continuously practiced religions, born in ancient Persia — it appears in the sacred threefold motto: *Humata, Hukhta, Huvarshta* (Good Thoughts, Good Words, Good Deeds). In modern Persian, you'll hear it in expressions like *Pendar-e Nik* (good thoughts) and *Kerdar-e Nik* (good deeds).
+<p align="center">
+  <img src="assets/demo.gif" alt="Nik-Music demo" width="720">
+</p>
 
-Nik-Music is a tiny macOS menu-bar app that brings that same spirit of **goodness** to your daily workflow: it automatically starts playing your music when you plug in headphones — and pauses itself if you're in a call. No friction, no forgotten steps, just a **nik** (good) moment every time you sit down to work.
+A tiny macOS menubar app that solves two annoying problems with the music you listen to all day.
 
-![Menu Bar](assets/menu-bar.png)
+## The two problems
 
-## The Problem
+**1. Friction.** You put your headphones on. You want music. So you unlock your laptop, find Spotify, scroll for something, hit play. Then a call comes in — pause. Hang up — find your place again. Take the headphones off — pause again. Every transition has a tax.
 
-Every day, when I sit down to work and put on my headphones, I have to:
+**2. Static music.** Playlists don't know you. They don't know it's raining, that you just finished a four-hour focus block, that it's Friday evening, or that today is rough and you need something gentler. They play the same shuffled mood at 9am Monday as they do at 11pm Friday.
 
-1. Open a music app
-2. Navigate to the right playlist
-3. Hit play
+Nik-Music removes both.
 
-And if I join a Zoom call with music still playing, it's embarrassing. I wanted something **smarter** — an app that just *knows* when my headphones are on and whether I'm in a call.
+- **Headphones in → music starts. Mic active (call) → pause. Headphones out → pause.** No more thinking about it.
+- **An MCP server exposes the music to your AI agents.** Tell Claude, Cursor, LM Studio, OpenCode, or any MCP-capable assistant what's going on in your day, and it picks the music. The model has tools to search Spotify, set what plays, and control playback — so "set the vibe for a rainy Sunday morning" or "I have a deep-focus block until 11, then a 1:1, then errands — score the rest of my afternoon" becomes a single sentence to your agent.
 
-## The Solution
+---
 
-Nik-Music is a lightweight native macOS agent that:
+## What context-aware music looks like
 
-- **Detects your headphones** via CoreAudio the moment they connect (wired, Bluetooth, AirPods, etc.)
-- **Auto-plays** your chosen music source when headphones connect
-- **Pauses during calls** by monitoring microphone usage — when Zoom, Teams, FaceTime, or any app uses your mic, music stops automatically and resumes when the call ends
-- **Menu bar control** — see what's playing, pause, skip, switch sources, or open the folder with one click
-- **Media keys work** — F8 (play/pause), F9 (next), F7 (previous) control your active source
-- **Always on** — runs as a LaunchAgent, starts on login, lives in your status bar
+The point of wiring music into your agent is that it can read context you'd otherwise type into Spotify search yourself.
 
-![Background Activity](assets/background-activity.png)
+A few prompts that work today:
 
-## Supported Music Sources
+> "Look at the weather and play something that fits the mood."
 
-| Source | How it works | Media keys |
-|--------|-------------|------------|
-| **Local Files** | Plays `.mp3`/`.m4a`/`.wav`/`.flac` from `~/Music/Focus` via `AVAudioPlayer` | Via `MPRemoteCommandCenter` |
-| **Spotify** | Controls Spotify via AppleScript + optional Web API for search | Routed through Nik-Music to Spotify |
+> "I just finished a hard day. Set something chill. Spanish guitar or lo-fi, your call."
 
-### Spotify mode
+> "Read my calendar — I have a deep-focus block until 11, then a 1:1, then admin. Pick music for the focus block."
 
-Requires the **Spotify desktop app** to be installed. Nik-Music sends AppleScript commands to control playback, reads the current track name, and detects play/pause state directly from Spotify.
+> "It's Friday night. Pick the vibe."
 
-You can configure:
-- **`spotifyUri`** — open a specific playlist/album/track on connect
-- **`spotifySearchQuery`** — search for a term. Without API credentials, it opens the search page. With credentials, it **auto-plays the first playlist result**.
+> "Play more from the artist that's currently on, but pick the chiller half of their catalogue."
 
-## Installation
+> "I'm cooking — something upbeat but not aggressive."
 
-### One-liner
+The agent calls the MCP tools (`get_status`, `set_spotify_search`, `play`, etc.) to do the work; you don't have to know they exist.
+
+---
+
+## Quick start
+
+### Requirements
+
+- macOS 11+
+- Swift toolchain (`xcode-select --install` if you don't have it)
+- A Spotify account with **Premium** (the Web API only allows playback control on Premium)
+- A free Spotify Developer app (instructions below)
+
+### Install
 
 ```bash
-git clone https://github.com/rightsum/nik-music.git
-cd nik-music
+git clone <this repo>
+cd music-app-mac
 ./install.sh
 ```
 
-### What `install.sh` does
+This builds the binary, drops it in `~/.local/bin`, installs a LaunchAgent so it starts at login, and creates `~/.nikmusic.json` with defaults. A 🎵 should appear in your menubar.
 
-1. Compiles the Swift app (`main.swift`)
-2. Creates `~/Music/Focus` if it doesn't exist
-3. Copies the binary to `~/.local/bin/NikMusic`
-4. Creates a default config at `~/.nikmusic.json`
-5. Registers a LaunchAgent so it auto-starts on login
+### Uninstall
 
-### Add your music (Local mode only)
-
-Drop audio files into:
-
-```
-~/Music/Focus
+```bash
+./uninstall.sh
 ```
 
-Supported formats: `.mp3`, `.m4a`, `.wav`, `.aiff`, `.aac`, `.caf`, `.mp4`, `.flac`
+---
 
-Then plug in your headphones. It should detect them, show a notification, and start shuffling.
+## First-time Spotify setup
 
-### Switching music sources
+You need to create a tiny Spotify Developer app so Nik-Music can use the Web API on your behalf. This takes about 90 seconds and is free.
 
-Click the 🎵/🎧 icon in your menu bar, hover over **Source**, and pick:
-- **Local Files**
-- **Spotify**
+1. Go to <https://developer.spotify.com/dashboard> and log in with your Spotify account.
+2. Click **Create app**.
+3. Fill in:
+   - **App name:** anything (e.g. `Nik-Music`)
+   - **App description:** anything
+   - **Redirect URI:** `http://127.0.0.1:8765/callback` — must be **exactly** this, including the scheme and port.
+   - **Which API/SDKs are you planning to use:** check **Web API**.
+4. Save. On the app's page, copy:
+   - **Client ID**
+   - **Client Secret** (click "View client secret")
+5. Open `~/.nikmusic.json` and add the two fields:
+   ```json
+   {
+     "source": "spotify",
+     "shuffle": true,
+     "spotifyClientId": "your-client-id-here",
+     "spotifyClientSecret": "your-client-secret-here"
+   }
+   ```
+6. Click the menubar 🎵 → **Source → Spotify**, then click **Authorize Spotify…**. Your browser opens, you approve, and you'll see an "Authorized" page. That's it — tokens are stored and auto-refresh from then on.
 
-Your choice is saved to `~/.nikmusic.json` and persists across restarts.
+> **Don't paste your client secret into public chats, screenshots, or commits.** If you do, rotate it from the dashboard (Edit settings → Rotate client secret) and update the file.
 
-### Configuration file
+---
 
-`~/.nikmusic.json`:
+## Connect an AI agent
+
+The menubar app speaks MCP over HTTP+SSE on `http://127.0.0.1:8765/sse`. Any MCP client can connect.
+
+### Turn the server on
+
+Menubar 🎵 → **MCP Server → Start MCP Server**. Once you turn it on, it'll auto-start every login. The menubar icon picks up a small `ᴹ` when MCP is running.
+
+### Get the config snippet
+
+Menubar 🎵 → **MCP Server → Copy MCP Config**. The clipboard now has:
 
 ```json
 {
-  "source": "local",
-  "musicFolder": "/Users/rightsum/Music/Focus",
-  "shuffle": true,
-  "spotifyUri": null,
-  "spotifySearchQuery": null,
-  "spotifyClientId": null,
-  "spotifyClientSecret": null
+  "mcpServers": {
+    "nik-music": {
+      "url": "http://127.0.0.1:8765/sse"
+    }
+  }
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `source` | `"local"` or `"spotify"` |
-| `musicFolder` | Path to local music folder (local mode only) |
-| `shuffle` | Shuffle tracks on load (local mode only) |
-| `spotifyUri` | Spotify URI to open on connect, e.g. `spotify:playlist:37i9dQZF1DX4wta20PHgwo` |
-| `spotifySearchQuery` | Search term, e.g. `"focus music"`. With API creds: auto-plays first playlist. Without: opens search page. |
-| `spotifyClientId` | Spotify Web API Client ID (optional, free, from developer.spotify.com) |
-| `spotifyClientSecret` | Spotify Web API Client Secret (optional) |
+Paste it into your client of choice:
 
-Edit this file directly or switch sources from the menu bar.
+| Client | Where to paste |
+|---|---|
+| **Claude Desktop** | Settings → Developer → Edit Config → merge into `claude_desktop_config.json` → restart |
+| **Cursor** | Settings → MCP → New server → paste → restart |
+| **LM Studio** | Program → Settings → mcp.json → merge → restart |
+| **OpenCode** / **Claude Code** | Add via `claude mcp add nik-music --transport sse http://127.0.0.1:8765/sse` (or your client's equivalent) |
 
-### 🎵 Spotify: Specific Playlist / Album / Track
+---
 
-Find any playlist on Spotify, click **Share → Copy Spotify URI**, then paste it into your config:
+## MCP tools the agent can call
 
-```json
-{
-  "source": "spotify",
-  "spotifyUri": "spotify:playlist:37i9dQZF1DX4wta20PHgwo"
-}
-```
+| Tool | Description |
+|---|---|
+| `get_status` | Current source, headphone connect state, mic state, what's playing |
+| `set_source` | Switch between `local` and `spotify` |
+| `set_spotify_search` | Set a free-text query (e.g. `"Sogand"`, `"chill Sunday morning"`, `"sad piano"`); plays immediately by default. Searches artists first (with name match), then playlists, albums, tracks. |
+| `set_spotify_uri` | Set an explicit `spotify:artist:…` / `:playlist:…` / `:album:…` / `:track:…` URI |
+| `play` | Resume / start playback |
+| `pause` | Pause |
+| `next_track` | Skip forward |
+| `previous_track` | Skip back |
 
-When you connect your headphones, Nik-Music will open that playlist in Spotify and hit **play**.
+Playback writes go through Spotify's Web API (`PUT /v1/me/player/*`) — no AppleScript flakiness, switches reliably even when something is already playing, and works against whichever device is active on your account.
 
-### 🔍 Spotify: Search (Open Search Page — no API)
+---
 
-Just set a search query:
+## Configuration reference
 
-```json
-{
-  "source": "spotify",
-  "spotifySearchQuery": "focus music"
-}
-```
+File: `~/.nikmusic.json`
 
-When headphones connect, Spotify opens to search results for `"focus music"`. You click the first playlist and it starts playing. No API setup needed.
+| Key | Type | Purpose |
+|---|---|---|
+| `source` | `"local"` \| `"spotify"` | Which backend to use |
+| `shuffle` | bool | Shuffle local files |
+| `musicFolder` | string? | Local music directory (default `~/Music/Focus`) |
+| `spotifyClientId` | string | From your Spotify Developer app |
+| `spotifyClientSecret` | string | From your Spotify Developer app |
+| `spotifySearchQuery` | string? | Last search the controller used |
+| `spotifyUri` | string? | Explicit URI override |
+| `spotifyAccessToken` | string | Set by OAuth; auto-refreshed |
+| `spotifyRefreshToken` | string | Set by OAuth |
+| `spotifyTokenExpiry` | number | Set by OAuth (Unix epoch seconds) |
+| `mcpPort` | number | MCP server port (default 8765) |
+| `mcpAutoStart` | bool | Start MCP automatically at login |
 
-### 🤖 Spotify: Search (Auto-Play First Result — with API)
+---
 
-For true "search and auto-play the first playlist", you need Spotify API credentials (free, no credit card):
+## Local files mode
 
-1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-2. Log in with your Spotify account
-3. Click **Create App**
-4. Name it `Nik-Music`, description `Personal music automation`
-5. Check the boxes, click **Save**
-6. Click **Settings** on your new app
-7. Copy **Client ID** and **Client Secret**
-8. Paste them into your config:
+If you don't want Spotify at all, drop audio files into `~/Music/Focus` (or set `musicFolder`) and switch source to `Local Files`. Headphones-in still triggers playback, mic-active still pauses, media keys still work.
 
-```json
-{
-  "source": "spotify",
-  "spotifySearchQuery": "focus music",
-  "spotifyClientId": "your-client-id-here",
-  "spotifyClientSecret": "your-client-secret-here"
-}
-```
-
-Now when headphones connect, Nik-Music searches Spotify's API for playlists, gets the first result, and **auto-plays** it. Zero clicks.
-
-### Priority Order
-
-**Spotify:**
-1. `spotifyUri` — explicit playlist/album/track
-2. `spotifySearchQuery` + API credentials — search & auto-play first result
-3. `spotifySearchQuery` — open search page
-4. Nothing — resume whatever was last playing
-
-## How It Works
-
-### Headphone Detection
-
-The app listens to macOS's default audio output device via CoreAudio. When the device name matches known headphone keywords, it triggers playback. It also polls every 2 seconds as a fallback for Bluetooth reconnects that CoreAudio events sometimes miss.
-
-Keywords include: `headphone`, `airpods`, `earbuds`, `beats`, `bose`, `sony`, `wh-`, `xm5`, `buds`, `bluetooth headset`, and more.
-
-**If your headphones aren't detected**, check `~/.nikmusic.log` for the exact device name and add it to the `headphoneKeywords` array in `main.swift`, then re-run `./install.sh`.
-
-### Call Detection
-
-Every 5 seconds, the app checks if the default input microphone is actively recording (`kAudioDevicePropertyDeviceIsRunningSomewhere`). This covers:
-
-- FaceTime
-- Zoom
-- Microsoft Teams
-- Slack huddles
-- Any app using the mic
-
-If a call starts during playback, music pauses immediately with a notification. When the mic goes idle, it resumes (unless you manually paused).
-
-### Media Keys
-
-Nik-Music registers with `MPRemoteCommandCenter`. When you press F8/F9/F7, macOS routes them to Nik-Music, which forwards the command to your active backend:
-
-- **Local mode** → controls `AVAudioPlayer`
-- **Spotify mode** → sends AppleScript to Spotify
-
-If another app (Spotify, Apple Music) recently played and is still the system's "Now Playing" app, you may need to click the Nik-Music menu bar icon once to reassert focus.
+---
 
 ## Permissions
 
-**No special permissions needed.** Nik-Music works out of the box with zero system permissions:
+The first time the app does any of these, macOS will prompt:
 
-| Feature | Needs Accessibility? | Needs Notifications? |
-|---------|----------------------|----------------------|
-| Headphone detection | ❌ No (CoreAudio) | ❌ No |
-| Call detection | ❌ No (CoreAudio) | ❌ No |
-| Local playback | ❌ No (AVAudioPlayer) | ❌ No |
-| Spotify control | ❌ No (AppleScript) | ❌ No |
-| Menu bar icon | ❌ No | ❌ No |
-| Media keys | ❌ No (MPRemoteCommandCenter) | ❌ No |
-| Notification banners | ❌ No | ⚠️ macOS may ask once |
+- **Accessibility / Apple Events** — only needed if you ever fall back to a local Spotify operation; not used in normal Web API mode.
+- **Notifications** — used for the "Headphones detected" and "MCP started" toasts. macOS doesn't always grant these for unsigned LaunchAgents; the menubar icon is the source of truth either way.
+- **Network** — outbound to `accounts.spotify.com` and `api.spotify.com`; inbound only on `127.0.0.1:8765` for MCP + OAuth callback.
 
-The first time a notification appears, macOS might ask if Nik-Music can show alerts. Just click **Allow**.
+No telemetry, no remote endpoints, no analytics. Everything stays on your machine and your Spotify account.
 
-## Development
+---
 
-### Project Structure
+## Troubleshooting
 
-```
-.
-├── main.swift          # Complete Swift source (~800 lines)
-├── install.sh          # Build + install + LaunchAgent setup
-├── uninstall.sh        # Clean removal
-├── build/              # Compiled binary
-├── assets/             # Screenshots
-├── .pi/                # Pi agent development context
-└── .claude/            # Claude agent development context
-```
+| Symptom | Fix |
+|---|---|
+| Menubar shows 🎵 but no ᴹ | MCP server is off → Start MCP Server |
+| "Spotify not authorized" notification | Click **Authorize Spotify…** in the menubar |
+| OAuth page says `INVALID_REDIRECT_URI` | The Redirect URI in the Spotify dashboard doesn't match `http://127.0.0.1:8765/callback` exactly |
+| `Authorize Spotify…` doesn't open the browser | Check `~/.nikmusic.log` — usually means `spotifyClientId` is missing from the config |
+| Web API returns 403 on play | Spotify Premium required for `PUT /v1/me/player/*` |
+| Web API returns 404 NO_ACTIVE_DEVICE | The app tries to launch Spotify and retry; open Spotify manually if it still fails |
+| Logs | `tail -f ~/.nikmusic.log` |
 
-### Build manually
+---
 
-```bash
-swiftc -framework Cocoa -framework CoreAudio -framework AVFoundation -framework MediaPlayer main.swift -o build/NikMusic
-```
+## Privacy and trust
 
-### Logs
+This is a personal, single-user, local-only app. Your Spotify tokens live in `~/.nikmusic.json` in plaintext (same trust model as a `.env` file). If that's not your bar, encrypt your home directory or move the file into Keychain — PRs welcome.
 
-```bash
-# Live debug log
-tail -f ~/.nikmusic.log
+The MCP server **only binds to `127.0.0.1`**. Nothing on your local network or the internet can reach it.
 
-# LaunchAgent stdout/stderr
-tail -f /tmp/nikmusic.out.log
-tail -f /tmp/nikmusic.err.log
-```
-
-### Managing the service
-
-```bash
-# Stop
-launchctl unload ~/Library/LaunchAgents/com.rightsum.nikmusic.plist
-
-# Start
-launchctl load ~/Library/LaunchAgents/com.rightsum.nikmusic.plist
-
-# Check if running
-ps aux | grep NikMusic
-```
-
-## Architecture
-
-- **Language**: Swift (AppKit + CoreAudio + AVFoundation + MediaPlayer)
-- **UI**: `NSStatusBar` menu-only app, no dock icon
-- **Persistence**: `launchd` LaunchAgent (`com.rightsum.nikmusic`)
-- **Session**: `LimitLoadToSessionType: Aqua` ensures menu bar + notifications work in the GUI session
-- **Backends**: Protocol-based (`MusicBackend`) with 2 implementations:
-  - `LocalBackend` — `AVAudioPlayer` for direct local-file playback
-  - `SpotifyBackend` — `NSAppleScript` + optional `SpotifyAPIClient` (URLSession + token management) for search auto-play
-- **Config**: JSON file at `~/.nikmusic.json` read on startup, written on source switch
-- **Notifications**: Legacy `NSUserNotification` (functional but deprecated; migration to `UserNotifications.framework` is a future TODO)
-
-## Known Limitations
-
-- `NSUserNotification` is deprecated. Works on macOS 15 but should migrate to `UserNotifications.framework`.
-- Media keys may conflict with Spotify/Apple Music if those apps were the last system "Now Playing" app. Click the Nik-Music menu bar icon to reassert focus.
-- No volume control from the app itself — use system volume.
-- Local mode has no playlist persistence; reshuffles on every launch.
-- Spotify search auto-play requires free API credentials (one-time setup).
+---
 
 ## License
 
-MIT
-
-## Credits
-
-Built by [@rightsum](https://github.com/rightsum) with a little help from Pi and Claude.
+MIT.

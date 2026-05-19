@@ -2,6 +2,7 @@ import Cocoa
 import CoreAudio
 import AVFoundation
 import MediaPlayer
+import CryptoKit
 
 // MARK: - Config
 
@@ -25,6 +26,11 @@ struct AppConfig: Codable {
     var spotifySearchQuery: String? = nil
     var spotifyClientId: String? = nil
     var spotifyClientSecret: String? = nil
+    var mcpPort: UInt16? = nil
+    var mcpAutoStart: Bool = false
+    var spotifyAccessToken: String? = nil
+    var spotifyRefreshToken: String? = nil
+    var spotifyTokenExpiry: Double? = nil
 }
 
 class ConfigManager {
@@ -73,19 +79,278 @@ class Logger {
     }
 }
 
+// MARK: - PKCE helpers
+
+func base64URLEncode(_ data: Data) -> String {
+    return data.base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+
+func randomURLSafeString(byteCount: Int) -> String {
+    var bytes = [UInt8](repeating: 0, count: byteCount)
+    _ = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
+    return base64URLEncode(Data(bytes))
+}
+
+func sha256Challenge(_ verifier: String) -> String {
+    let hash = SHA256.hash(data: verifier.data(using: .ascii)!)
+    return base64URLEncode(Data(hash))
+}
+
+// MARK: - Spotify Web API (OAuth user-scoped playback control)
+
+class SpotifyWebAPI {
+    static let shared = SpotifyWebAPI()
+
+    static let redirectURI = "http://127.0.0.1:8765/callback"
+    static let scope = "user-modify-playback-state user-read-playback-state"
+
+    var pendingCodeVerifier: String?
+    var pendingState: String?
+
+    func buildAuthorizeURL(clientId: String) -> URL? {
+        let verifier = randomURLSafeString(byteCount: 32)
+        let challenge = sha256Challenge(verifier)
+        let state = randomURLSafeString(byteCount: 16)
+        pendingCodeVerifier = verifier
+        pendingState = state
+
+        var components = URLComponents(string: "https://accounts.spotify.com/authorize")!
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: clientId),
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "redirect_uri", value: SpotifyWebAPI.redirectURI),
+            URLQueryItem(name: "state", value: state),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "code_challenge", value: challenge),
+            URLQueryItem(name: "scope", value: SpotifyWebAPI.scope)
+        ]
+        return components.url
+    }
+
+    func handleAuthorizationCode(code: String, state: String, clientId: String, completion: @escaping (Bool, String) -> Void) {
+        guard state == pendingState, let verifier = pendingCodeVerifier else {
+            completion(false, "OAuth state mismatch — re-click Authorize Spotify.")
+            return
+        }
+        pendingCodeVerifier = nil
+        pendingState = nil
+
+        let url = URL(string: "https://accounts.spotify.com/api/token")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let encodedRedirect = SpotifyWebAPI.redirectURI.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? SpotifyWebAPI.redirectURI
+        let body = "grant_type=authorization_code&code=\(code)&redirect_uri=\(encodedRedirect)&client_id=\(clientId)&code_verifier=\(verifier)"
+        request.httpBody = body.data(using: .utf8)
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error = error {
+                completion(false, "Network error: \(error.localizedDescription)")
+                return
+            }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(false, "Token endpoint returned non-JSON")
+                return
+            }
+            if let err = json["error_description"] as? String {
+                completion(false, "Spotify: \(err)")
+                return
+            }
+            guard let access = json["access_token"] as? String,
+                  let refresh = json["refresh_token"] as? String,
+                  let expiresIn = json["expires_in"] as? Double else {
+                completion(false, "Token response missing fields")
+                return
+            }
+            var cfg = ConfigManager.shared.load()
+            cfg.spotifyAccessToken = access
+            cfg.spotifyRefreshToken = refresh
+            cfg.spotifyTokenExpiry = Date().addingTimeInterval(expiresIn).timeIntervalSince1970
+            ConfigManager.shared.save(cfg)
+            Logger.shared.log("Spotify: authorized, token expires in \(Int(expiresIn))s")
+            completion(true, "Authorized")
+        }.resume()
+    }
+
+    var isAuthorized: Bool {
+        ConfigManager.shared.load().spotifyAccessToken != nil
+    }
+
+    // Synchronously fetches a valid access token, refreshing if needed.
+    func validAccessToken() -> String? {
+        var cfg = ConfigManager.shared.load()
+        guard let token = cfg.spotifyAccessToken else { return nil }
+        let now = Date().timeIntervalSince1970
+        let expiry = cfg.spotifyTokenExpiry ?? 0
+        if now < expiry - 60 { return token }
+
+        guard let refresh = cfg.spotifyRefreshToken,
+              let clientId = cfg.spotifyClientId else {
+            Logger.shared.log("Spotify: cannot refresh, missing refresh_token or client_id")
+            return nil
+        }
+
+        let url = URL(string: "https://accounts.spotify.com/api/token")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let body = "grant_type=refresh_token&refresh_token=\(refresh)&client_id=\(clientId)"
+        request.httpBody = body.data(using: .utf8)
+
+        var newToken: String?
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            defer { sem.signal() }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let access = json["access_token"] as? String,
+                  let expiresIn = json["expires_in"] as? Double else {
+                Logger.shared.log("Spotify: refresh failed")
+                return
+            }
+            cfg.spotifyAccessToken = access
+            cfg.spotifyTokenExpiry = Date().addingTimeInterval(expiresIn).timeIntervalSince1970
+            if let newRefresh = json["refresh_token"] as? String {
+                cfg.spotifyRefreshToken = newRefresh
+            }
+            ConfigManager.shared.save(cfg)
+            Logger.shared.log("Spotify: token refreshed")
+            newToken = access
+        }.resume()
+        sem.wait()
+        return newToken
+    }
+
+    // MARK: - Playback control
+
+    func play(contextURI: String? = nil, trackURIs: [String]? = nil, deviceId: String? = nil) {
+        playInternal(contextURI: contextURI, trackURIs: trackURIs, deviceId: deviceId, alreadyRetried: false)
+    }
+
+    private func playInternal(contextURI: String?, trackURIs: [String]?, deviceId: String?, alreadyRetried: Bool) {
+        guard let token = validAccessToken() else {
+            Logger.shared.log("Spotify play: not authorized")
+            return
+        }
+
+        var endpoint = "https://api.spotify.com/v1/me/player/play"
+        if let dev = deviceId {
+            endpoint += "?device_id=\(dev)"
+        }
+        var request = URLRequest(url: URL(string: endpoint)!)
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var body: [String: Any] = [:]
+        if let c = contextURI { body["context_uri"] = c }
+        if let t = trackURIs { body["uris"] = t }
+        if !body.isEmpty {
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        } else {
+            // Empty body = resume current playback; Spotify requires explicit empty JSON object
+            request.httpBody = "{}".data(using: .utf8)
+        }
+
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 204 || status == 202 {
+                Logger.shared.log("Spotify play: success")
+                return
+            }
+            if status == 404 && !alreadyRetried {
+                Logger.shared.log("Spotify play: no active device, locating one")
+                self.findFirstDevice { devId in
+                    if let id = devId {
+                        Logger.shared.log("Spotify play: retrying on device \(id)")
+                        self.playInternal(contextURI: contextURI, trackURIs: trackURIs, deviceId: id, alreadyRetried: true)
+                    } else {
+                        Logger.shared.log("Spotify play: no devices found, launching desktop app")
+                        DispatchQueue.main.async {
+                            NSWorkspace.shared.open(URL(string: "spotify:")!)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                            self.findFirstDevice { devId2 in
+                                if let id2 = devId2 {
+                                    self.playInternal(contextURI: contextURI, trackURIs: trackURIs, deviceId: id2, alreadyRetried: true)
+                                } else {
+                                    Logger.shared.log("Spotify play: still no devices after launch")
+                                }
+                            }
+                        }
+                    }
+                }
+                return
+            }
+            let bodyStr = data.flatMap { String(data: $0, encoding: .utf8) } ?? "<no body>"
+            Logger.shared.log("Spotify play: HTTP \(status) \(bodyStr)")
+        }.resume()
+    }
+
+    func pause() { simpleCommand(method: "PUT", path: "/v1/me/player/pause") }
+    func next() { simpleCommand(method: "POST", path: "/v1/me/player/next") }
+    func previous() { simpleCommand(method: "POST", path: "/v1/me/player/previous") }
+
+    private func simpleCommand(method: String, path: String) {
+        guard let token = validAccessToken() else { return }
+        var request = URLRequest(url: URL(string: "https://api.spotify.com" + path)!)
+        request.httpMethod = method
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            Logger.shared.log("Spotify \(method) \(path): HTTP \(status)")
+        }.resume()
+    }
+
+    func findFirstDevice(completion: @escaping (String?) -> Void) {
+        guard let token = validAccessToken() else { completion(nil); return }
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/devices")!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let devices = json["devices"] as? [[String: Any]] else {
+                completion(nil); return
+            }
+            let active = devices.first(where: { ($0["is_active"] as? Bool) == true })
+            let chosen = active ?? devices.first
+            completion(chosen?["id"] as? String)
+        }.resume()
+    }
+
+    func fetchCurrentPlayback(completion: @escaping ([String: Any]?) -> Void) {
+        guard let token = validAccessToken() else { completion(nil); return }
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player")!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 204 { completion(nil); return }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(nil); return
+            }
+            completion(json)
+        }.resume()
+    }
+}
+
 // MARK: - Spotify API Client
 
 class SpotifyAPIClient {
     private var cachedToken: String?
     private var tokenExpiry: Date?
 
-    func searchFirstPlaylist(query: String, clientId: String, clientSecret: String) -> String? {
+    func searchFirstMatch(query: String, clientId: String, clientSecret: String) -> String? {
         let token = fetchToken(clientId: clientId, clientSecret: clientSecret)
         guard let t = token else {
             Logger.shared.log("Spotify API: failed to get token")
             return nil
         }
-        return searchPlaylists(query: query, token: t)
+        return searchAll(query: query, token: t)
     }
 
     private func fetchToken(clientId: String, clientSecret: String) -> String? {
@@ -131,9 +396,9 @@ class SpotifyAPIClient {
         return result
     }
 
-    private func searchPlaylists(query: String, token: String) -> String? {
+    private func searchAll(query: String, token: String) -> String? {
         let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let url = URL(string: "https://api.spotify.com/v1/search?q=\(encodedQuery)&type=playlist&limit=5")!
+        let url = URL(string: "https://api.spotify.com/v1/search?q=\(encodedQuery)&type=artist,playlist,album,track&limit=3")!
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
@@ -141,40 +406,77 @@ class SpotifyAPIClient {
         let semaphore = DispatchSemaphore(value: 0)
 
         let task = URLSession.shared.dataTask(with: request) { data, _, error in
+            defer { semaphore.signal() }
             if let error = error {
                 Logger.shared.log("Spotify search error: \(error)")
-                semaphore.signal()
                 return
             }
-            guard let data = data else {
-                Logger.shared.log("Spotify search: no data")
-                semaphore.signal()
-                return
-            }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 Logger.shared.log("Spotify search: bad JSON")
-                semaphore.signal()
                 return
             }
-            if let playlists = json["playlists"] as? [String: Any] {
-                let total = playlists["total"] as? Int ?? -1
-                let rawItems = playlists["items"] as? [Any] ?? []
-                let nonNullCount = rawItems.compactMap({ $0 as? [String: Any] }).count
-                Logger.shared.log("Spotify search: total=\(total), items=\(rawItems.count), valid=\(nonNullCount)")
-                if let first = rawItems.compactMap({ $0 as? [String: Any] }).first,
-                   let uri = first["uri"] as? String {
-                    Logger.shared.log("Spotify search: found \(uri)")
-                    result = uri
-                } else {
-                    Logger.shared.log("Spotify search: no valid results")
-                }
-            } else {
-                Logger.shared.log("Spotify search: no playlists key")
-                if let errorObj = json["error"] as? [String: Any] {
-                    Logger.shared.log("Spotify search API error: \(errorObj)")
+            if let errorObj = json["error"] as? [String: Any] {
+                Logger.shared.log("Spotify search API error: \(errorObj)")
+                return
+            }
+
+            let lowerQuery = query.lowercased()
+
+            func items(_ key: String) -> [[String: Any]] {
+                guard let group = json[key] as? [String: Any],
+                      let raw = group["items"] as? [Any] else { return [] }
+                return raw.compactMap { $0 as? [String: Any] }
+            }
+
+            // Priority 1: artist — but only if name resembles query
+            for artist in items("artists") {
+                if let name = artist["name"] as? String,
+                   let uri = artist["uri"] as? String {
+                    let lowerName = name.lowercased()
+                    if lowerName == lowerQuery
+                        || lowerQuery.contains(lowerName)
+                        || lowerName.contains(lowerQuery) {
+                        Logger.shared.log("Spotify search: matched artist '\(name)' → \(uri)")
+                        result = uri
+                        return
+                    }
                 }
             }
-            semaphore.signal()
+
+            // Priority 2: playlist
+            if let p = items("playlists").first,
+               let uri = p["uri"] as? String, let name = p["name"] as? String {
+                Logger.shared.log("Spotify search: matched playlist '\(name)' → \(uri)")
+                result = uri
+                return
+            }
+
+            // Priority 3: album
+            if let a = items("albums").first,
+               let uri = a["uri"] as? String, let name = a["name"] as? String {
+                Logger.shared.log("Spotify search: matched album '\(name)' → \(uri)")
+                result = uri
+                return
+            }
+
+            // Priority 4: track
+            if let t = items("tracks").first,
+               let uri = t["uri"] as? String, let name = t["name"] as? String {
+                Logger.shared.log("Spotify search: matched track '\(name)' → \(uri)")
+                result = uri
+                return
+            }
+
+            // Priority 5: top artist even without name match (last resort)
+            if let a = items("artists").first,
+               let uri = a["uri"] as? String, let name = a["name"] as? String {
+                Logger.shared.log("Spotify search: fallback to top artist '\(name)' → \(uri)")
+                result = uri
+                return
+            }
+
+            Logger.shared.log("Spotify search: no results for '\(query)'")
         }
         task.resume()
         semaphore.wait()
@@ -303,138 +605,118 @@ class LocalBackend: NSObject, MusicBackend, AVAudioPlayerDelegate {
 class SpotifyBackend: NSObject, MusicBackend {
     var config: AppConfig
     let apiClient = SpotifyAPIClient()
+    let webAPI = SpotifyWebAPI.shared
+
+    private var cachedIsPlaying = false
+    private var cachedTrackName: String?
+    private var pollTimer: Timer?
 
     init(config: AppConfig) {
         self.config = config
-    }
-
-    private func runScript(_ source: String) -> String? {
-        let script = NSAppleScript(source: source)
-        var errorInfo: NSDictionary?
-        let result = script?.executeAndReturnError(&errorInfo)
-        if let error = errorInfo {
-            Logger.shared.log("AppleScript error: \(error)")
+        super.init()
+        refreshPlaybackState()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.refreshPlaybackState()
         }
-        return result?.stringValue
     }
 
-    private func isAppRunning() -> Bool {
-        let apps = NSWorkspace.shared.runningApplications
-        return apps.contains { $0.localizedName == "Spotify" }
+    deinit {
+        pollTimer?.invalidate()
+    }
+
+    private func refreshPlaybackState() {
+        guard webAPI.isAuthorized else { return }
+        webAPI.fetchCurrentPlayback { [weak self] state in
+            guard let self = self else { return }
+            let playing = (state?["is_playing"] as? Bool) ?? false
+            var trackName: String?
+            if let item = state?["item"] as? [String: Any], let name = item["name"] as? String {
+                let artists = (item["artists"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
+                trackName = artists.isEmpty ? name : "\(name) — \(artists.joined(separator: ", "))"
+            }
+            let changed = (playing != self.cachedIsPlaying) || (trackName != self.cachedTrackName)
+            self.cachedIsPlaying = playing
+            self.cachedTrackName = trackName
+            if changed {
+                DispatchQueue.main.async {
+                    NikMusicController.shared.updateMenu()
+                }
+            }
+        }
     }
 
     func play() {
-        // Reload config to pick up edits made while disconnected
         config = ConfigManager.shared.load()
-
-        if !isAppRunning() {
-            Logger.shared.log("Spotify: launching app")
-            _ = runScript("tell application \"Spotify\" to activate")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.executePlay()
+        guard webAPI.isAuthorized else {
+            Logger.shared.log("Spotify: not authorized — click 'Authorize Spotify…' in the menu")
+            DispatchQueue.main.async {
+                NikMusicController.shared.notify(title: "Nik-Music", body: "Spotify not authorized — open the menubar and click 'Authorize Spotify…'.")
             }
             return
         }
-        executePlay()
-    }
 
-    private func executePlay() {
         // Priority 1: explicit URI
         if let uri = config.spotifyUri, !uri.isEmpty {
             Logger.shared.log("Spotify: playing explicit URI \(uri)")
-            let result = runScript("tell application \"Spotify\" to play track \"\(uri)\"")
-            if let r = result { Logger.shared.log("Spotify: result '\(r)'") }
+            playURI(uri)
             return
         }
 
-        // Priority 2: search query with API credentials
+        // Priority 2: search query
         if let query = config.spotifySearchQuery, !query.isEmpty,
            let clientId = config.spotifyClientId, !clientId.isEmpty,
            let clientSecret = config.spotifyClientSecret, !clientSecret.isEmpty {
             Logger.shared.log("Spotify: searching for '\(query)'")
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self = self else { return }
-                if let uri = self.apiClient.searchFirstPlaylist(query: query, clientId: clientId, clientSecret: clientSecret) {
-                    DispatchQueue.main.async {
-                        Logger.shared.log("Spotify: playing search result \(uri)")
-                        let result = self.runScript("tell application \"Spotify\" to play track \"\(uri)\"")
-                        if let r = result { Logger.shared.log("Spotify: result '\(r)'") }
-                    }
+                if let uri = self.apiClient.searchFirstMatch(query: query, clientId: clientId, clientSecret: clientSecret) {
+                    Logger.shared.log("Spotify: playing search result \(uri)")
+                    self.playURI(uri)
                 } else {
-                    DispatchQueue.main.async {
-                        Logger.shared.log("Spotify: search failed, falling back to resume")
-                        _ = self.runScript("tell application \"Spotify\" to play")
-                    }
+                    Logger.shared.log("Spotify: search returned nothing")
                 }
             }
             return
         }
 
-        // Priority 3: search query without API credentials
-        if let query = config.spotifySearchQuery, !query.isEmpty {
-            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? query
-            let searchUri = "spotify:search:\(encoded)"
-            Logger.shared.log("Spotify: opening search page \(searchUri)")
-            _ = runScript("tell application \"Spotify\" to open location \"\(searchUri)\"")
-            return
-        }
+        // Priority 3: just resume whatever was last playing
+        webAPI.play()
+    }
 
-        // Priority 4: just resume
-        _ = runScript("tell application \"Spotify\" to play")
-        Logger.shared.log("Spotify: play (resume)")
+    private func playURI(_ uri: String) {
+        if uri.hasPrefix("spotify:track:") {
+            webAPI.play(trackURIs: [uri])
+        } else {
+            webAPI.play(contextURI: uri)
+        }
     }
 
     func pause() {
-        guard isAppRunning() else {
-            Logger.shared.log("Spotify: not running, skipping pause")
-            return
-        }
-        _ = runScript("tell application \"Spotify\" to pause")
+        webAPI.pause()
         Logger.shared.log("Spotify: pause")
     }
 
     func stop() {
-        Logger.shared.log("Spotify: stopped (no-op, app stays closed)")
+        Logger.shared.log("Spotify: stop (no-op)")
     }
 
     func nextTrack() {
-        guard isAppRunning() else {
-            Logger.shared.log("Spotify: not running, skipping next")
-            return
-        }
-        _ = runScript("tell application \"Spotify\" to next track")
+        webAPI.next()
         Logger.shared.log("Spotify: next")
     }
 
     func previousTrack() {
-        guard isAppRunning() else {
-            Logger.shared.log("Spotify: not running, skipping previous")
-            return
-        }
-        _ = runScript("tell application \"Spotify\" to previous track")
+        webAPI.previous()
         Logger.shared.log("Spotify: previous")
     }
 
-    var isPlaying: Bool {
-        guard isAppRunning() else { return false }
-        let state = runScript("tell application \"Spotify\" to return player state as string")
-        return state?.lowercased() == "playing"
-    }
-
-    var currentTrackName: String? {
-        guard isAppRunning() else { return nil }
-        let name = runScript("tell application \"Spotify\" to return name of current track")
-        let artist = runScript("tell application \"Spotify\" to return artist of current track")
-        if let n = name, let a = artist {
-            return "\(n) - \(a)"
-        }
-        return name
-    }
+    var isPlaying: Bool { cachedIsPlaying }
+    var currentTrackName: String? { cachedTrackName }
 }
 
 // MARK: - NikMusicController
 
-class NikMusicController: NSObject {
+class NikMusicController: NSObject, NSMenuDelegate {
     static let shared = NikMusicController()
 
     var statusItem: NSStatusItem?
@@ -443,6 +725,10 @@ class NikMusicController: NSObject {
     var isHeadphonesConnected = false
     var isManuallyPaused = false
     var lastDeviceName = ""
+    var mcpServer = MCPHTTPServer()
+    var mcpToggleItem: NSMenuItem!
+    var mcpPortItem: NSMenuItem!
+    var authorizeSpotifyItem: NSMenuItem!
 
     let headphoneKeywords = [
         "headphone", "external headphones", "airpods", "earbuds",
@@ -452,7 +738,7 @@ class NikMusicController: NSObject {
     ]
 
     func setup() {
-        Logger.shared.log("=== NikMusic starting ===")
+        Logger.shared.log("=== Nik-Music starting ===")
         config = ConfigManager.shared.load()
         setupMenuBar()
         setupMediaKeys()
@@ -460,6 +746,10 @@ class NikMusicController: NSObject {
         startOutputDeviceListener()
         startPolling()
         checkOutputDevice()
+        if config.mcpAutoStart {
+            Logger.shared.log("MCP autostart enabled, starting server")
+            startMCP(announceSuccess: false)
+        }
     }
 
     func createBackend() {
@@ -477,6 +767,7 @@ class NikMusicController: NSObject {
     }
 
     func switchSource(_ source: MusicSource) {
+        config = ConfigManager.shared.load()
         config.source = source
         ConfigManager.shared.save(config)
         if let local = backend as? LocalBackend {
@@ -565,6 +856,30 @@ class NikMusicController: NSObject {
         sourceItem.submenu = sourceMenu
         menu.addItem(sourceItem)
 
+        authorizeSpotifyItem = NSMenuItem(title: "Authorize Spotify…", action: #selector(authorizeSpotify), keyEquivalent: "")
+        authorizeSpotifyItem.target = self
+        menu.addItem(authorizeSpotifyItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // MCP Server submenu
+        let mcpMenu = NSMenu(title: "MCP Server")
+        mcpToggleItem = NSMenuItem(title: "Start MCP Server", action: #selector(toggleMCP), keyEquivalent: "")
+        mcpToggleItem.target = self
+        mcpMenu.addItem(mcpToggleItem)
+
+        mcpPortItem = NSMenuItem(title: "Port: —", action: nil, keyEquivalent: "")
+        mcpPortItem.isEnabled = false
+        mcpMenu.addItem(mcpPortItem)
+
+        let copyConfig = NSMenuItem(title: "Copy MCP Config", action: #selector(copyMCPConfig), keyEquivalent: "")
+        copyConfig.target = self
+        mcpMenu.addItem(copyConfig)
+
+        let mcpItem = NSMenuItem(title: "MCP Server", action: nil, keyEquivalent: "")
+        mcpItem.submenu = mcpMenu
+        menu.addItem(mcpItem)
+
         menu.addItem(NSMenuItem.separator())
 
         let openFolder = NSMenuItem(title: "Open Music Folder", action: #selector(openFolder), keyEquivalent: "o")
@@ -577,7 +892,12 @@ class NikMusicController: NSObject {
         quit.target = self
         menu.addItem(quit)
 
+        menu.delegate = self
         statusItem?.menu = menu
+        updateMenu()
+    }
+
+    @objc func menuWillOpen(_ menu: NSMenu) {
         updateMenu()
     }
 
@@ -597,7 +917,23 @@ class NikMusicController: NSObject {
         }
         nowPlayingItem.title = statusText
         playPauseItem.title = (backend?.isPlaying ?? false) ? "Pause" : "Play"
-        statusItem?.button?.title = (backend?.isPlaying ?? false) ? "🎧" : "🎵"
+        let baseIcon = (backend?.isPlaying ?? false) ? "🎧" : "🎵"
+        statusItem?.button?.title = mcpServer.isRunning ? "\(baseIcon)ᴹ" : baseIcon
+
+        // Update MCP menu
+        if mcpServer.isRunning {
+            mcpToggleItem.title = "Stop MCP Server"
+            mcpPortItem.title = "Port: \(mcpServer.port) (localhost only)"
+        } else {
+            mcpToggleItem.title = "Start MCP Server"
+            mcpPortItem.title = "Port: —"
+        }
+
+        if authorizeSpotifyItem != nil {
+            authorizeSpotifyItem.title = SpotifyWebAPI.shared.isAuthorized
+                ? "Re-authorize Spotify…"
+                : "Authorize Spotify…"
+        }
 
         if let menu = statusItem?.menu {
             for item in menu.items {
@@ -638,6 +974,80 @@ class NikMusicController: NSObject {
     @objc func selectSource(_ sender: NSMenuItem) {
         guard let source = sender.representedObject as? MusicSource else { return }
         switchSource(source)
+    }
+
+    @objc func toggleMCP() {
+        if mcpServer.isRunning {
+            mcpServer.stop()
+            config = ConfigManager.shared.load()
+            config.mcpAutoStart = false
+            ConfigManager.shared.save(config)
+            notify(title: "Nik-Music MCP", body: "MCP server stopped.")
+            updateMenu()
+        } else {
+            startMCP(announceSuccess: true)
+        }
+    }
+
+    func startMCP(announceSuccess: Bool) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let preferred = self.config.mcpPort ?? 8765
+            let actual = self.mcpServer.start(preferredPort: preferred)
+            DispatchQueue.main.async {
+                if actual > 0 {
+                    self.config = ConfigManager.shared.load()
+                    self.config.mcpPort = actual
+                    self.config.mcpAutoStart = true
+                    ConfigManager.shared.save(self.config)
+                    if announceSuccess {
+                        self.notify(title: "Nik-Music MCP", body: "Server running on http://127.0.0.1:\(actual)/sse")
+                    }
+                } else {
+                    self.notify(title: "Nik-Music MCP", body: "Failed to start MCP server. No available port.")
+                }
+                self.updateMenu()
+            }
+        }
+    }
+
+    @objc func authorizeSpotify() {
+        let cfg = ConfigManager.shared.load()
+        guard let clientId = cfg.spotifyClientId, !clientId.isEmpty else {
+            notify(title: "Nik-Music", body: "No Spotify client ID in ~/.nikmusic.json.")
+            return
+        }
+
+        let openBrowser = { [weak self] in
+            guard let self = self, let url = SpotifyWebAPI.shared.buildAuthorizeURL(clientId: clientId) else { return }
+            Logger.shared.log("Spotify auth: opening \(url.absoluteString)")
+            NSWorkspace.shared.open(url)
+            self.notify(title: "Nik-Music", body: "Approve in your browser. The page will say 'Authorized' when done.")
+        }
+
+        if mcpServer.isRunning {
+            openBrowser()
+        } else {
+            // The OAuth callback lands on the MCP server, so it must be up first.
+            startMCP(announceSuccess: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: openBrowser)
+        }
+    }
+
+    @objc func copyMCPConfig() {
+        let port = mcpServer.isRunning ? mcpServer.port : (config.mcpPort ?? 8765)
+        let json = """
+        {
+          "mcpServers": {
+            "nik-music": {
+              "url": "http://127.0.0.1:\(port)/sse"
+            }
+          }
+        }
+        """
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(json, forType: .string)
+        notify(title: "Nik-Music MCP", body: "Config copied to clipboard! Paste it into Claude Desktop or Cursor settings.")
     }
 
     @objc func openFolder() {
