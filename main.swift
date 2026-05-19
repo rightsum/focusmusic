@@ -267,13 +267,27 @@ class YouTubeMusicBackend: NSObject, MusicBackend {
         self.config = config
     }
 
-    private func runScript(_ source: String) {
+    private func runScript(_ source: String) -> String? {
         let script = NSAppleScript(source: source)
         var errorInfo: NSDictionary?
-        script?.executeAndReturnError(&errorInfo)
+        let result = script?.executeAndReturnError(&errorInfo)
         if let error = errorInfo {
             Logger.shared.log("AppleScript error: \(error)")
+            if let num = error["NSAppleScriptErrorNumber"] as? Int, num == -1002 || num == 1002 {
+                showAccessibilityAlert()
+            }
         }
+        return result?.stringValue
+    }
+
+    private func showAccessibilityAlert() {
+        let notification = NSUserNotification()
+        notification.title = "🔐 Accessibility Required"
+        notification.informativeText = "FocusMusic needs Accessibility permissions to control YouTube Music. Click to open System Settings."
+        notification.hasActionButton = true
+        notification.actionButtonTitle = "Open Settings"
+        notification.userInfo = ["openAccessibility": true]
+        NSUserNotificationCenter.default.deliver(notification)
     }
 
     private func sendKey(_ keyCode: Int, shift: Bool = false) {
@@ -756,6 +770,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
 
     func userNotificationCenter(_ center: NSUserNotificationCenter, shouldPresent notification: NSUserNotification) -> Bool {
         return true
+    }
+
+    func userNotificationCenter(_ center: NSUserNotificationCenter, didActivate notification: NSUserNotification) {
+        if notification.userInfo?["openAccessibility"] != nil {
+            let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 
