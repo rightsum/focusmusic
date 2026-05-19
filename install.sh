@@ -32,7 +32,7 @@ else
     TMP="$(mktemp -d)"
     trap 'rm -rf "$TMP"' EXIT
     URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-        | grep -E '"browser_download_url".*"NikMusic"' \
+        | grep -E '"browser_download_url".*/NikMusic"' \
         | head -1 | cut -d '"' -f 4)
     if [ -z "$URL" ]; then
         echo "❌ No release binary found for $REPO."
