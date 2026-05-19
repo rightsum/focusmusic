@@ -313,11 +313,22 @@ class SpotifyBackend: NSObject, MusicBackend {
     }
 
     func play() {
-        guard isAppRunning() else {
-            Logger.shared.log("Spotify: not running, skipping play")
+        // On headphone connect, user WANTS music to start.
+        // If app is closed, open it. Only skip if we're in a background loop
+        // (e.g. mic-poll resume) and user intentionally closed it.
+        if !isAppRunning() {
+            Logger.shared.log("Spotify: launching app")
+            _ = runScript("tell application \"Spotify\" to activate")
+            // Wait for app to launch before sending commands
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.executePlay()
+            }
             return
         }
+        executePlay()
+    }
 
+    private func executePlay() {
         // Priority 1: explicit URI
         if let uri = config.spotifyUri, !uri.isEmpty {
             Logger.shared.log("Spotify: opening explicit URI \(uri)")
@@ -473,44 +484,50 @@ class YouTubeMusicBackend: NSObject, MusicBackend {
     }
 
     func play() {
-        // Priority 1: explicit URL
-        if let urlString = config.youtubeMusicUrl, !urlString.isEmpty {
-            Logger.shared.log("YouTube Music: opening URL \(urlString)")
-            let task = Process()
-            task.launchPath = "/usr/bin/open"
-            task.arguments = ["-a", "YouTube Music", urlString]
-            try? task.run()
-            // Wait for page to load, then try to play
+        // On headphone connect, user WANTS music to start.
+        // If app is closed, open it. Only skip on background pause/stop.
+        if !isAppRunning() {
+            // Priority 1: explicit URL
+            if let urlString = config.youtubeMusicUrl, !urlString.isEmpty {
+                Logger.shared.log("YouTube Music: launching app with URL \(urlString)")
+                let task = Process()
+                task.launchPath = "/usr/bin/open"
+                task.arguments = ["-a", "YouTube Music", urlString]
+                try? task.run()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    self?.sendKey(49) // Space
+                    Logger.shared.log("YouTube Music: sent spacebar after URL open")
+                }
+                _isPlaying = true
+                return
+            }
+            // Priority 2: search query
+            if let query = config.youtubeMusicSearchQuery, !query.isEmpty {
+                let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+                let searchUrl = "https://music.youtube.com/search?q=\(encoded)"
+                Logger.shared.log("YouTube Music: launching app with search \(searchUrl)")
+                let task = Process()
+                task.launchPath = "/usr/bin/open"
+                task.arguments = ["-a", "YouTube Music", searchUrl]
+                try? task.run()
+                _isPlaying = true
+                return
+            }
+            // Priority 3: just launch and play
+            Logger.shared.log("YouTube Music: launching app")
+            runScript("tell application \"YouTube Music\" to activate")
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
                 self?.sendKey(49) // Space
-                Logger.shared.log("YouTube Music: sent spacebar after URL open")
+                Logger.shared.log("YouTube Music: sent spacebar to play")
             }
             _isPlaying = true
             return
         }
 
-        // Priority 2: search query -> open search page
-        if let query = config.youtubeMusicSearchQuery, !query.isEmpty {
-            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-            let searchUrl = "https://music.youtube.com/search?q=\(encoded)"
-            Logger.shared.log("YouTube Music: opening search page \(searchUrl)")
-            let task = Process()
-            task.launchPath = "/usr/bin/open"
-            task.arguments = ["-a", "YouTube Music", searchUrl]
-            try? task.run()
-            _isPlaying = true
-            return
-        }
-
-        // Priority 3: just resume
-        if !isAppRunning() {
-            Logger.shared.log("YouTube Music: launching app")
-            runScript("tell application \"YouTube Music\" to activate")
-        } else {
-            Logger.shared.log("YouTube Music: bringing to front")
-            runScript("tell application \"YouTube Music\" to activate")
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+        // App is already running — bring to front and play
+        Logger.shared.log("YouTube Music: bringing to front")
+        runScript("tell application \"YouTube Music\" to activate")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.sendKey(49) // Space
             Logger.shared.log("YouTube Music: sent spacebar to play")
         }
