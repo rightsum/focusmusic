@@ -15,7 +15,7 @@ A tiny macOS menubar app that solves two annoying problems with the music you li
 Nik-Music removes both.
 
 - **Headphones in → music starts. Mic active (call) → pause. Headphones out → pause.** No more thinking about it.
-- **An MCP server exposes the music to your AI agents.** Tell Claude, Cursor, LM Studio, OpenCode, or any MCP-capable assistant what's going on in your day, and it picks the music. The model has tools to search Spotify, set what plays, and control playback — so "set the vibe for a rainy Sunday morning" or "I have a deep-focus block until 11, then a 1:1, then errands — score the rest of my afternoon" becomes a single sentence to your agent.
+- **An MCP server exposes the music to your AI agents.** Tell OpenClaw, Claude, LM Studio, OpenCode, or any MCP-capable assistant what's going on in your day, and it picks the music. The model has tools to search Spotify, set what plays, and control playback — so "set the vibe for a rainy Sunday morning" or "I have a deep-focus block until 11, then a 1:1, then errands — score the rest of my afternoon" becomes a single sentence to your agent.
 
 ---
 
