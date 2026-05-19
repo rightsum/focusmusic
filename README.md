@@ -1,14 +1,12 @@
 # 🎧 FocusMusic
 
-A tiny macOS menu-bar app that automatically starts playing your focus music when you plug in headphones — and pauses itself if you're in a call.
-
-No more manually opening Spotify or Apple Music every time you put on your headphones. FocusMusic is always running in the background, watching for your headphones and respecting your calls.
+A tiny macOS menu-bar app that automatically starts playing your focus music when you plug in headphones — and pauses itself if you're in a call. Now configurable to work with **local files**, **Spotify**, or **YouTube Music**.
 
 ![Menu Bar](assets/menu-bar.png)
 
 ## The Problem
 
-Every day, I have a folder of curated focus music at `~/Music/Focus`. When I sit down to work and put on my headphones, I have to:
+Every day, when I sit down to work and put on my headphones, I have to:
 
 1. Open a music app
 2. Navigate to the right playlist
@@ -21,13 +19,36 @@ And if I join a Zoom call with music still playing, it's embarrassing. I wanted 
 FocusMusic is a lightweight native macOS agent that:
 
 - **Detects your headphones** via CoreAudio the moment they connect (wired, Bluetooth, AirPods, etc.)
-- **Auto-plays** music from `~/Music/Focus`, shuffling through your local files
+- **Auto-plays** your chosen music source when headphones connect
 - **Pauses during calls** by monitoring microphone usage — when Zoom, Teams, FaceTime, or any app uses your mic, music stops automatically and resumes when the call ends
-- **Menu bar control** — see what's playing, pause, skip, or open the folder with one click
-- **Media keys work** — F8 (play/pause), F9 (next), F7 (previous) control FocusMusic while it's active
+- **Menu bar control** — see what's playing, pause, skip, switch sources, or open the folder with one click
+- **Media keys work** — F8 (play/pause), F9 (next), F7 (previous) control your active source
 - **Always on** — runs as a LaunchAgent, starts on login, lives in your status bar
 
 ![Background Activity](assets/background-activity.png)
+
+## Supported Music Sources
+
+| Source | How it works | Media keys |
+|--------|-------------|------------|
+| **Local Files** | Plays `.mp3`/`.m4a`/`.wav`/`.flac` from `~/Music/Focus` via `AVAudioPlayer` | Via `MPRemoteCommandCenter` |
+| **Spotify** | Controls Spotify via AppleScript (`play`, `pause`, `next track`) | Routed through FocusMusic to Spotify |
+| **YouTube Music** | Activates the app + simulates keyboard shortcuts via AppleScript/System Events | Routed through FocusMusic to YouTube Music |
+
+### Spotify mode
+
+Requires the **Spotify desktop app** to be installed. FocusMusic sends AppleScript commands to control playback, reads the current track name, and detects play/pause state directly from Spotify.
+
+### YouTube Music mode
+
+Requires the official **YouTube Music Mac app** from the App Store. FocusMusic uses AppleScript to activate the app and simulate keyboard shortcuts:
+- **Spacebar** — play/pause
+- **Shift+N** — next track
+- **Shift+P** — previous track
+
+> ⚠️ **YouTube Music requires Accessibility permissions** for `System Events` key simulation. macOS will prompt you the first time. If it doesn't work, go to **System Settings → Privacy & Security → Accessibility** and add `FocusMusic`.
+
+> ⚠️ YouTube Music state tracking is best-effort (we can't query its playback state via AppleScript). If commands feel out of sync, pause/resume manually once.
 
 ## Installation
 
@@ -44,9 +65,10 @@ cd focusmusic
 1. Compiles the Swift app (`main.swift`)
 2. Creates `~/Music/Focus` if it doesn't exist
 3. Copies the binary to `~/.local/bin/FocusMusic`
-4. Registers a LaunchAgent so it auto-starts on login
+4. Creates a default config at `~/.focusmusic.json`
+5. Registers a LaunchAgent so it auto-starts on login
 
-### Add your music
+### Add your music (Local mode only)
 
 Drop audio files into:
 
@@ -58,13 +80,42 @@ Supported formats: `.mp3`, `.m4a`, `.wav`, `.aiff`, `.aac`, `.caf`, `.mp4`, `.fl
 
 Then plug in your headphones. It should detect them, show a notification, and start shuffling.
 
+### Switching music sources
+
+Click the 🎵/🎧 icon in your menu bar, hover over **Source**, and pick:
+- **Local Files**
+- **Spotify**
+- **YouTube Music**
+
+Your choice is saved to `~/.focusmusic.json` and persists across restarts.
+
+### Configuration file
+
+`~/.focusmusic.json`:
+
+```json
+{
+  "source": "local",
+  "musicFolder": "/Users/rightsum/Music/Focus",
+  "shuffle": true
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `source` | `"local"`, `"spotify"`, or `"youtubeMusic"` |
+| `musicFolder` | Path to local music folder (local mode only) |
+| `shuffle` | Shuffle tracks on load (local mode only) |
+
+Edit this file directly or switch sources from the menu bar.
+
 ### Uninstall
 
 ```bash
 ./uninstall.sh
 ```
 
-This removes the binary and the LaunchAgent.
+This removes the binary, config, and LaunchAgent.
 
 ## How It Works
 
@@ -90,7 +141,13 @@ If a call starts during playback, music pauses immediately with a notification. 
 
 ### Media Keys
 
-FocusMusic registers with `MPRemoteCommandCenter` so macOS routes the physical media keys to it while it's the active audio player. If another app (Spotify, Apple Music) recently played audio and is still the "Now Playing" app, you may need to pause that app first for the keys to route to FocusMusic.
+FocusMusic registers with `MPRemoteCommandCenter`. When you press F8/F9/F7, macOS routes them to FocusMusic, which forwards the command to your active backend:
+
+- **Local mode** → controls `AVAudioPlayer`
+- **Spotify mode** → sends AppleScript to Spotify
+- **YouTube Music mode** → sends AppleScript keyboard shortcuts to YouTube Music
+
+If another app (Spotify, Apple Music) recently played and is still the system's "Now Playing" app, you may need to click the FocusMusic menu bar icon once to reassert focus.
 
 ## Development
 
@@ -98,9 +155,9 @@ FocusMusic registers with `MPRemoteCommandCenter` so macOS routes the physical m
 
 ```
 .
-├── main.swift          # Complete Swift source
-├── install.sh          # Build + install script
-├── uninstall.sh        # Remove script
+├── main.swift          # Complete Swift source (~700 lines)
+├── install.sh          # Build + install + LaunchAgent setup
+├── uninstall.sh        # Clean removal
 ├── build/              # Compiled binary
 ├── assets/             # Screenshots
 ├── .pi/                # Pi agent development context
@@ -143,16 +200,20 @@ ps aux | grep FocusMusic
 - **UI**: `NSStatusBar` menu-only app, no dock icon
 - **Persistence**: `launchd` LaunchAgent (`com.rightsum.focusmusic`)
 - **Session**: `LimitLoadToSessionType: Aqua` ensures menu bar + notifications work in the GUI session
-- **Playback**: `AVAudioPlayer` for direct local-file playback
+- **Backends**: Protocol-based (`MusicBackend`) with 3 implementations:
+  - `LocalBackend` — `AVAudioPlayer` for direct local-file playback
+  - `SpotifyBackend` — `NSAppleScript` to control Spotify
+  - `YouTubeMusicBackend` — AppleScript + `System Events` key simulation
+- **Config**: JSON file at `~/.focusmusic.json` read on startup, written on source switch
 - **Notifications**: Legacy `NSUserNotification` (functional but deprecated; migration to `UserNotifications.framework` is a future TODO)
 
 ## Known Limitations
 
-- Media keys may conflict with Spotify / Apple Music if those apps were the last "Now Playing" app. Click the FocusMusic menu bar icon to reassert focus.
-- Uses deprecated `NSUserNotification` API. Works on macOS 15 but should migrate to `UserNotifications.framework`.
+- `NSUserNotification` is deprecated. Works on macOS 15 but should migrate to `UserNotifications.framework`.
+- YouTube Music support requires Accessibility permissions and is best-effort (no programmatic state query).
+- Media keys may conflict with Spotify/Apple Music if those apps were the last system "Now Playing" app. Click the FocusMusic menu bar icon to reassert focus.
 - No volume control from the app itself — use system volume.
-- No playlist persistence; reshuffles on every launch.
-- Only plays local files, not Spotify / Apple Music streams.
+- Local mode has no playlist persistence; reshuffles on every launch.
 
 ## License
 

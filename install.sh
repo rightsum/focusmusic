@@ -7,10 +7,15 @@ BINARY="$BUILD_DIR/FocusMusic"
 
 echo "🔨 Building FocusMusic..."
 mkdir -p "$BUILD_DIR"
-swiftc -framework Cocoa -framework CoreAudio -framework AVFoundation "$PROJECT_DIR/main.swift" -o "$BINARY"
+swiftc -framework Cocoa -framework CoreAudio -framework AVFoundation -framework MediaPlayer "$PROJECT_DIR/main.swift" -o "$BINARY"
 
 echo "📁 Creating music folder..."
 mkdir -p ~/Music/Focus
+
+echo "📝 Creating default config..."
+if [ ! -f ~/.focusmusic.json ]; then
+    echo '{"source":"local","shuffle":true}' > ~/.focusmusic.json
+fi
 
 echo "📦 Installing binary to ~/.local/bin..."
 mkdir -p ~/.local/bin
@@ -58,5 +63,7 @@ echo "🎵 Add music files to: ~/Music/Focus"
 echo "🎧 Plug in your headphones to test it"
 echo "⏯️  Control playback from the menu bar icon"
 echo ""
-echo "📋 Logs: tail -f /tmp/focusmusic.err.log"
-echo "🔧 Edit ~/Library/LaunchAgents/com.rightsum.focusmusic.plist if needed"
+echo "📱 Switch sources from the menu bar: Local Files / Spotify / YouTube Music"
+echo "🛠️  Config file: ~/.focusmusic.json"
+echo ""
+echo "📋 Logs: tail -f ~/.focusmusic.log"

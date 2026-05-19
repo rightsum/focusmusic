@@ -7,5 +7,6 @@ echo "🛑 Stopping FocusMusic..."
 launchctl unload "$PLIST" 2>/dev/null || true
 rm -f "$PLIST"
 rm -f ~/.local/bin/FocusMusic
+rm -f ~/.focusmusic.json
 
 echo "✅ Uninstalled."
