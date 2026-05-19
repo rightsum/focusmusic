@@ -23,6 +23,8 @@ struct AppConfig: Codable {
     var source: MusicSource = .local
     var musicFolder: String? = nil
     var shuffle: Bool = true
+    var spotifyUri: String? = nil
+    var youtubeMusicUrl: String? = nil
 }
 
 class ConfigManager {
@@ -89,7 +91,6 @@ class LocalBackend: NSObject, MusicBackend, AVAudioPlayerDelegate {
     var player: AVAudioPlayer?
     var musicFiles: [URL] = []
     var currentIndex = 0
-    var onTrackFinished: (() -> Void)?
 
     let musicDirectory: URL
     let shuffle: Bool
@@ -191,6 +192,12 @@ class LocalBackend: NSObject, MusicBackend, AVAudioPlayerDelegate {
 // MARK: - Spotify Backend (AppleScript)
 
 class SpotifyBackend: NSObject, MusicBackend {
+    var config: AppConfig
+
+    init(config: AppConfig) {
+        self.config = config
+    }
+
     private func runScript(_ source: String) -> String? {
         let script = NSAppleScript(source: source)
         var errorInfo: NSDictionary?
@@ -202,8 +209,18 @@ class SpotifyBackend: NSObject, MusicBackend {
     }
 
     func play() {
-        _ = runScript("tell application \"Spotify\" to play")
-        Logger.shared.log("Spotify: play")
+        if let uri = config.spotifyUri, !uri.isEmpty {
+            Logger.shared.log("Spotify: opening \(uri)")
+            _ = runScript("tell application \"Spotify\" to open location \"\(uri)\"")
+            // Give Spotify a moment to load the playlist/album
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                _ = self?.runScript("tell application \"Spotify\" to play")
+                Logger.shared.log("Spotify: play after URI load")
+            }
+        } else {
+            _ = runScript("tell application \"Spotify\" to play")
+            Logger.shared.log("Spotify: play")
+        }
     }
 
     func pause() {
@@ -243,7 +260,12 @@ class SpotifyBackend: NSObject, MusicBackend {
 // MARK: - YouTube Music Backend (AppleScript + System Events)
 
 class YouTubeMusicBackend: NSObject, MusicBackend {
+    var config: AppConfig
     private var _isPlaying = false
+
+    init(config: AppConfig) {
+        self.config = config
+    }
 
     private func runScript(_ source: String) {
         let script = NSAppleScript(source: source)
@@ -254,61 +276,80 @@ class YouTubeMusicBackend: NSObject, MusicBackend {
         }
     }
 
-    private func activate() {
-        runScript("tell application \"YouTube Music\" to activate")
+    private func sendKey(_ keyCode: Int, shift: Bool = false) {
+        if shift {
+            runScript("""
+                tell application "System Events"
+                    key code \(keyCode) using shift down
+                end tell
+            """)
+        } else {
+            runScript("""
+                tell application "System Events"
+                    key code \(keyCode)
+                end tell
+            """)
+        }
+    }
+
+    private func isAppRunning() -> Bool {
+        let apps = NSWorkspace.shared.runningApplications
+        return apps.contains { $0.localizedName == "YouTube Music" }
     }
 
     func play() {
-        activate()
-        // Spacebar toggles play/pause in YouTube Music
+        if let urlString = config.youtubeMusicUrl, !urlString.isEmpty {
+            // Open a specific playlist/album URL in the YouTube Music app
+            let task = Process()
+            task.launchPath = "/usr/bin/open"
+            task.arguments = ["-a", "YouTube Music", urlString]
+            try? task.run()
+            _isPlaying = true
+            Logger.shared.log("YouTube Music: opening URL \(urlString)")
+            return
+        }
+
+        // Fallback: activate and press space
+        runScript("tell application \"YouTube Music\" to activate")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.runScript("""
-                tell application "System Events"
-                    key code 49
-                end tell
-            """)
+            self?.sendKey(49) // Space
         }
         _isPlaying = true
         Logger.shared.log("YouTube Music: play (spacebar)")
     }
 
     func pause() {
-        activate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.runScript("""
-                tell application "System Events"
-                    key code 49
-                end tell
-            """)
+        // Don't activate — if the app is closed, there's nothing to pause
+        if isAppRunning() {
+            sendKey(49) // Space
         }
         _isPlaying = false
-        Logger.shared.log("YouTube Music: pause (spacebar)")
+        Logger.shared.log("YouTube Music: pause")
     }
 
     func stop() {
-        pause()
+        // Don't call pause() here — we don't want to activate/reopen the app
+        // when headphones disconnect
+        _isPlaying = false
+        Logger.shared.log("YouTube Music: stopped (no-op, app stays closed)")
     }
 
     func nextTrack() {
-        activate()
+        if !isAppRunning() {
+            runScript("tell application \"YouTube Music\" to activate")
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.runScript("""
-                tell application "System Events"
-                    key code 45 using shift down
-                end tell
-            """)
+            self?.sendKey(45, shift: true) // Shift+N
         }
         Logger.shared.log("YouTube Music: next (Shift+N)")
     }
 
     func previousTrack() {
-        activate()
+        if !isAppRunning() {
+            runScript("tell application \"YouTube Music\" to activate")
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.runScript("""
-                tell application "System Events"
-                    key code 35 using shift down
-                end tell
-            """)
+            self?.sendKey(35, shift: true) // Shift+P
         }
         Logger.shared.log("YouTube Music: previous (Shift+P)")
     }
@@ -318,7 +359,7 @@ class YouTubeMusicBackend: NSObject, MusicBackend {
     }
 
     var currentTrackName: String? {
-        return "YouTube Music"
+        return nil // YouTube Music doesn't expose track info via AppleScript
     }
 }
 
@@ -361,10 +402,10 @@ class FocusMusicController: NSObject {
                 ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Music/Focus")
             backend = LocalBackend(musicDirectory: folder, shuffle: config.shuffle)
         case .spotify:
-            backend = SpotifyBackend()
+            backend = SpotifyBackend(config: config)
             clearNowPlayingInfo()
         case .youtubeMusic:
-            backend = YouTubeMusicBackend()
+            backend = YouTubeMusicBackend(config: config)
             clearNowPlayingInfo()
         }
         Logger.shared.log("Backend: \(config.source.displayName)")
@@ -484,7 +525,7 @@ class FocusMusicController: NSObject {
     func updateMenu() {
         var statusText = "No headphones"
         if isHeadphonesConnected {
-            let track = backend?.currentTrackName ?? "Ready"
+            let track = backend?.currentTrackName ?? config.source.displayName
             if backend?.isPlaying ?? false {
                 statusText = "▶️ \(track)"
             } else if isMicInUse() {

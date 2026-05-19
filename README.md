@@ -39,12 +39,16 @@ FocusMusic is a lightweight native macOS agent that:
 
 Requires the **Spotify desktop app** to be installed. FocusMusic sends AppleScript commands to control playback, reads the current track name, and detects play/pause state directly from Spotify.
 
+You can optionally define a **specific playlist/album/track** via `spotifyUri` in the config. When headphones connect, FocusMusic opens that URI and starts playing it.
+
 ### YouTube Music mode
 
 Requires the official **YouTube Music Mac app** from the App Store. FocusMusic uses AppleScript to activate the app and simulate keyboard shortcuts:
 - **Spacebar** — play/pause
 - **Shift+N** — next track
 - **Shift+P** — previous track
+
+You can optionally define a **specific playlist/album URL** via `youtubeMusicUrl` in the config. When headphones connect, FocusMusic opens that URL in the YouTube Music app.
 
 > ⚠️ **YouTube Music requires Accessibility permissions** for `System Events` key simulation. macOS will prompt you the first time. If it doesn't work, go to **System Settings → Privacy & Security → Accessibility** and add `FocusMusic`.
 
@@ -97,7 +101,9 @@ Your choice is saved to `~/.focusmusic.json` and persists across restarts.
 {
   "source": "local",
   "musicFolder": "/Users/rightsum/Music/Focus",
-  "shuffle": true
+  "shuffle": true,
+  "spotifyUri": null,
+  "youtubeMusicUrl": null
 }
 ```
 
@@ -106,8 +112,43 @@ Your choice is saved to `~/.focusmusic.json` and persists across restarts.
 | `source` | `"local"`, `"spotify"`, or `"youtubeMusic"` |
 | `musicFolder` | Path to local music folder (local mode only) |
 | `shuffle` | Shuffle tracks on load (local mode only) |
+| `spotifyUri` | Spotify URI to open on connect, e.g. `spotify:playlist:37i9dQZF1DX4wta20PHgwo` |
+| `youtubeMusicUrl` | YouTube Music URL to open on connect, e.g. `https://music.youtube.com/playlist?list=...` |
 
 Edit this file directly or switch sources from the menu bar.
+
+### 🎵 Spotify Playlist / Album
+
+Find any playlist on Spotify, click **Share → Copy Spotify URI**, then paste it into your config:
+
+```json
+{
+  "source": "spotify",
+  "spotifyUri": "spotify:playlist:37i9dQZF1DX4wta20PHgwo"
+}
+```
+
+When you connect your headphones, FocusMusic will:
+1. Open that playlist in Spotify
+2. Wait ~1 second for it to load
+3. Hit **play**
+
+You can also use album URIs (`spotify:album:...`) or track URIs (`spotify:track:...`).
+
+### 🎵 YouTube Music Playlist
+
+Find a playlist on YouTube Music, copy its URL, then paste it into your config:
+
+```json
+{
+  "source": "youtubeMusic",
+  "youtubeMusicUrl": "https://music.youtube.com/playlist?list=PL..."
+}
+```
+
+When you connect your headphones, FocusMusic will open that URL directly in the YouTube Music app. You'll need to hit play manually the first time (the app doesn't support auto-play on URL open), but after that, media keys and call detection work normally.
+
+If you leave `youtubeMusicUrl` as `null`, it simply resumes whatever was last playing.
 
 ### Uninstall
 
@@ -155,7 +196,7 @@ If another app (Spotify, Apple Music) recently played and is still the system's 
 
 ```
 .
-├── main.swift          # Complete Swift source (~700 lines)
+├── main.swift          # Complete Swift source (~750 lines)
 ├── install.sh          # Build + install + LaunchAgent setup
 ├── uninstall.sh        # Clean removal
 ├── build/              # Compiled binary
@@ -202,8 +243,8 @@ ps aux | grep FocusMusic
 - **Session**: `LimitLoadToSessionType: Aqua` ensures menu bar + notifications work in the GUI session
 - **Backends**: Protocol-based (`MusicBackend`) with 3 implementations:
   - `LocalBackend` — `AVAudioPlayer` for direct local-file playback
-  - `SpotifyBackend` — `NSAppleScript` to control Spotify
-  - `YouTubeMusicBackend` — AppleScript + `System Events` key simulation
+  - `SpotifyBackend` — `NSAppleScript` to control Spotify; supports `spotifyUri` for playlist targeting
+  - `YouTubeMusicBackend` — AppleScript `activate` + `System Events` key simulation; supports `youtubeMusicUrl` for playlist targeting; `stop()` is a no-op to avoid reopening a closed app
 - **Config**: JSON file at `~/.focusmusic.json` read on startup, written on source switch
 - **Notifications**: Legacy `NSUserNotification` (functional but deprecated; migration to `UserNotifications.framework` is a future TODO)
 
@@ -214,6 +255,7 @@ ps aux | grep FocusMusic
 - Media keys may conflict with Spotify/Apple Music if those apps were the last system "Now Playing" app. Click the FocusMusic menu bar icon to reassert focus.
 - No volume control from the app itself — use system volume.
 - Local mode has no playlist persistence; reshuffles on every launch.
+- YouTube Music URL open does not auto-play; you need to hit play once after the URL loads.
 
 ## License
 
