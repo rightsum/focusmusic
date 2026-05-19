@@ -1,6 +1,8 @@
-# 🎧 FocusMusic
+# 🎧 Nik-Music
 
-A tiny macOS menu-bar app that automatically starts playing your focus music when you plug in headphones — and pauses itself if you're in a call. Works with **local files** or **Spotify**.
+**Nik** (نیک) is a Persian word meaning **"good," "virtuous,"** and **"benevolent."** In Zoroastrianism — one of the world's oldest continuously practiced religions, born in ancient Persia — it appears in the sacred threefold motto: *Humata, Hukhta, Huvarshta* (Good Thoughts, Good Words, Good Deeds). In modern Persian, you'll hear it in expressions like *Pendar-e Nik* (good thoughts) and *Kerdar-e Nik* (good deeds).
+
+Nik-Music is a tiny macOS menu-bar app that brings that same spirit of **goodness** to your daily workflow: it automatically starts playing your music when you plug in headphones — and pauses itself if you're in a call. No friction, no forgotten steps, just a **nik** (good) moment every time you sit down to work.
 
 ![Menu Bar](assets/menu-bar.png)
 
@@ -16,7 +18,7 @@ And if I join a Zoom call with music still playing, it's embarrassing. I wanted 
 
 ## The Solution
 
-FocusMusic is a lightweight native macOS agent that:
+Nik-Music is a lightweight native macOS agent that:
 
 - **Detects your headphones** via CoreAudio the moment they connect (wired, Bluetooth, AirPods, etc.)
 - **Auto-plays** your chosen music source when headphones connect
@@ -32,11 +34,11 @@ FocusMusic is a lightweight native macOS agent that:
 | Source | How it works | Media keys |
 |--------|-------------|------------|
 | **Local Files** | Plays `.mp3`/`.m4a`/`.wav`/`.flac` from `~/Music/Focus` via `AVAudioPlayer` | Via `MPRemoteCommandCenter` |
-| **Spotify** | Controls Spotify via AppleScript + optional Web API for search | Routed through FocusMusic to Spotify |
+| **Spotify** | Controls Spotify via AppleScript + optional Web API for search | Routed through Nik-Music to Spotify |
 
 ### Spotify mode
 
-Requires the **Spotify desktop app** to be installed. FocusMusic sends AppleScript commands to control playback, reads the current track name, and detects play/pause state directly from Spotify.
+Requires the **Spotify desktop app** to be installed. Nik-Music sends AppleScript commands to control playback, reads the current track name, and detects play/pause state directly from Spotify.
 
 You can configure:
 - **`spotifyUri`** — open a specific playlist/album/track on connect
@@ -47,8 +49,8 @@ You can configure:
 ### One-liner
 
 ```bash
-git clone https://github.com/rightsum/focusmusic.git
-cd focusmusic
+git clone https://github.com/rightsum/nik-music.git
+cd nik-music
 ./install.sh
 ```
 
@@ -56,8 +58,8 @@ cd focusmusic
 
 1. Compiles the Swift app (`main.swift`)
 2. Creates `~/Music/Focus` if it doesn't exist
-3. Copies the binary to `~/.local/bin/FocusMusic`
-4. Creates a default config at `~/.focusmusic.json`
+3. Copies the binary to `~/.local/bin/NikMusic`
+4. Creates a default config at `~/.nikmusic.json`
 5. Registers a LaunchAgent so it auto-starts on login
 
 ### Add your music (Local mode only)
@@ -78,11 +80,11 @@ Click the 🎵/🎧 icon in your menu bar, hover over **Source**, and pick:
 - **Local Files**
 - **Spotify**
 
-Your choice is saved to `~/.focusmusic.json` and persists across restarts.
+Your choice is saved to `~/.nikmusic.json` and persists across restarts.
 
 ### Configuration file
 
-`~/.focusmusic.json`:
+`~/.nikmusic.json`:
 
 ```json
 {
@@ -119,7 +121,7 @@ Find any playlist on Spotify, click **Share → Copy Spotify URI**, then paste i
 }
 ```
 
-When you connect your headphones, FocusMusic will open that playlist in Spotify and hit **play**.
+When you connect your headphones, Nik-Music will open that playlist in Spotify and hit **play**.
 
 ### 🔍 Spotify: Search (Open Search Page — no API)
 
@@ -141,7 +143,7 @@ For true "search and auto-play the first playlist", you need Spotify API credent
 1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
 2. Log in with your Spotify account
 3. Click **Create App**
-4. Name it `FocusMusic`, description `Personal music automation`
+4. Name it `Nik-Music`, description `Personal music automation`
 5. Check the boxes, click **Save**
 6. Click **Settings** on your new app
 7. Copy **Client ID** and **Client Secret**
@@ -156,7 +158,7 @@ For true "search and auto-play the first playlist", you need Spotify API credent
 }
 ```
 
-Now when headphones connect, FocusMusic searches Spotify's API for playlists, gets the first result, and **auto-plays** it. Zero clicks.
+Now when headphones connect, Nik-Music searches Spotify's API for playlists, gets the first result, and **auto-plays** it. Zero clicks.
 
 ### Priority Order
 
@@ -174,7 +176,7 @@ The app listens to macOS's default audio output device via CoreAudio. When the d
 
 Keywords include: `headphone`, `airpods`, `earbuds`, `beats`, `bose`, `sony`, `wh-`, `xm5`, `buds`, `bluetooth headset`, and more.
 
-**If your headphones aren't detected**, check `~/.focusmusic.log` for the exact device name and add it to the `headphoneKeywords` array in `main.swift`, then re-run `./install.sh`.
+**If your headphones aren't detected**, check `~/.nikmusic.log` for the exact device name and add it to the `headphoneKeywords` array in `main.swift`, then re-run `./install.sh`.
 
 ### Call Detection
 
@@ -190,16 +192,16 @@ If a call starts during playback, music pauses immediately with a notification. 
 
 ### Media Keys
 
-FocusMusic registers with `MPRemoteCommandCenter`. When you press F8/F9/F7, macOS routes them to FocusMusic, which forwards the command to your active backend:
+Nik-Music registers with `MPRemoteCommandCenter`. When you press F8/F9/F7, macOS routes them to Nik-Music, which forwards the command to your active backend:
 
 - **Local mode** → controls `AVAudioPlayer`
 - **Spotify mode** → sends AppleScript to Spotify
 
-If another app (Spotify, Apple Music) recently played and is still the system's "Now Playing" app, you may need to click the FocusMusic menu bar icon once to reassert focus.
+If another app (Spotify, Apple Music) recently played and is still the system's "Now Playing" app, you may need to click the Nik-Music menu bar icon once to reassert focus.
 
 ## Permissions
 
-**No special permissions needed.** FocusMusic works out of the box with zero system permissions:
+**No special permissions needed.** Nik-Music works out of the box with zero system permissions:
 
 | Feature | Needs Accessibility? | Needs Notifications? |
 |---------|----------------------|----------------------|
@@ -211,7 +213,7 @@ If another app (Spotify, Apple Music) recently played and is still the system's 
 | Media keys | ❌ No (MPRemoteCommandCenter) | ❌ No |
 | Notification banners | ❌ No | ⚠️ macOS may ask once |
 
-The first time a notification appears, macOS might ask if FocusMusic can show alerts. Just click **Allow**.
+The first time a notification appears, macOS might ask if Nik-Music can show alerts. Just click **Allow**.
 
 ## Development
 
@@ -231,49 +233,49 @@ The first time a notification appears, macOS might ask if FocusMusic can show al
 ### Build manually
 
 ```bash
-swiftc -framework Cocoa -framework CoreAudio -framework AVFoundation -framework MediaPlayer main.swift -o build/FocusMusic
+swiftc -framework Cocoa -framework CoreAudio -framework AVFoundation -framework MediaPlayer main.swift -o build/NikMusic
 ```
 
 ### Logs
 
 ```bash
 # Live debug log
-tail -f ~/.focusmusic.log
+tail -f ~/.nikmusic.log
 
 # LaunchAgent stdout/stderr
-tail -f /tmp/focusmusic.out.log
-tail -f /tmp/focusmusic.err.log
+tail -f /tmp/nikmusic.out.log
+tail -f /tmp/nikmusic.err.log
 ```
 
 ### Managing the service
 
 ```bash
 # Stop
-launchctl unload ~/Library/LaunchAgents/com.rightsum.focusmusic.plist
+launchctl unload ~/Library/LaunchAgents/com.rightsum.nikmusic.plist
 
 # Start
-launchctl load ~/Library/LaunchAgents/com.rightsum.focusmusic.plist
+launchctl load ~/Library/LaunchAgents/com.rightsum.nikmusic.plist
 
 # Check if running
-ps aux | grep FocusMusic
+ps aux | grep NikMusic
 ```
 
 ## Architecture
 
 - **Language**: Swift (AppKit + CoreAudio + AVFoundation + MediaPlayer)
 - **UI**: `NSStatusBar` menu-only app, no dock icon
-- **Persistence**: `launchd` LaunchAgent (`com.rightsum.focusmusic`)
+- **Persistence**: `launchd` LaunchAgent (`com.rightsum.nikmusic`)
 - **Session**: `LimitLoadToSessionType: Aqua` ensures menu bar + notifications work in the GUI session
 - **Backends**: Protocol-based (`MusicBackend`) with 2 implementations:
   - `LocalBackend` — `AVAudioPlayer` for direct local-file playback
   - `SpotifyBackend` — `NSAppleScript` + optional `SpotifyAPIClient` (URLSession + token management) for search auto-play
-- **Config**: JSON file at `~/.focusmusic.json` read on startup, written on source switch
+- **Config**: JSON file at `~/.nikmusic.json` read on startup, written on source switch
 - **Notifications**: Legacy `NSUserNotification` (functional but deprecated; migration to `UserNotifications.framework` is a future TODO)
 
 ## Known Limitations
 
 - `NSUserNotification` is deprecated. Works on macOS 15 but should migrate to `UserNotifications.framework`.
-- Media keys may conflict with Spotify/Apple Music if those apps were the last system "Now Playing" app. Click the FocusMusic menu bar icon to reassert focus.
+- Media keys may conflict with Spotify/Apple Music if those apps were the last system "Now Playing" app. Click the Nik-Music menu bar icon to reassert focus.
 - No volume control from the app itself — use system volume.
 - Local mode has no playlist persistence; reshuffles on every launch.
 - Spotify search auto-play requires free API credentials (one-time setup).

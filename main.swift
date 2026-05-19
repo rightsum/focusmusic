@@ -29,7 +29,7 @@ struct AppConfig: Codable {
 
 class ConfigManager {
     static let shared = ConfigManager()
-    let configURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".focusmusic.json")
+    let configURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".nikmusic.json")
 
     func load() -> AppConfig {
         if let data = try? Data(contentsOf: configURL),
@@ -53,7 +53,7 @@ class ConfigManager {
 
 class Logger {
     static let shared = Logger()
-    let logURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".focusmusic.log")
+    let logURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".nikmusic.log")
 
     func log(_ message: String) {
         let timestamp = ISO8601DateFormatter().string(from: Date())
@@ -284,7 +284,7 @@ class LocalBackend: NSObject, MusicBackend, AVAudioPlayerDelegate {
         if isPlaying, let name = currentTrackName {
             infoCenter.nowPlayingInfo = [
                 MPMediaItemPropertyTitle: name,
-                MPMediaItemPropertyArtist: "Focus Music",
+                MPMediaItemPropertyArtist: "Nik Music",
                 MPNowPlayingInfoPropertyPlaybackRate: 1.0
             ]
         } else {
@@ -432,10 +432,10 @@ class SpotifyBackend: NSObject, MusicBackend {
     }
 }
 
-// MARK: - FocusMusicController
+// MARK: - NikMusicController
 
-class FocusMusicController: NSObject {
-    static let shared = FocusMusicController()
+class NikMusicController: NSObject {
+    static let shared = NikMusicController()
 
     var statusItem: NSStatusItem?
     var backend: MusicBackend?
@@ -452,7 +452,7 @@ class FocusMusicController: NSObject {
     ]
 
     func setup() {
-        Logger.shared.log("=== FocusMusic starting ===")
+        Logger.shared.log("=== NikMusic starting ===")
         config = ConfigManager.shared.load()
         setupMenuBar()
         setupMediaKeys()
@@ -486,7 +486,7 @@ class FocusMusicController: NSObject {
         }
         createBackend()
         updateMenu()
-        notify(title: "Focus Music", body: "Switched to \(source.displayName)")
+        notify(title: "Nik Music", body: "Switched to \(source.displayName)")
     }
 
     func clearNowPlayingInfo() {
@@ -529,7 +529,7 @@ class FocusMusicController: NSObject {
 
         let menu = NSMenu()
 
-        let titleItem = NSMenuItem(title: "Focus Music", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "Nik Music", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
 
@@ -669,7 +669,7 @@ class FocusMusicController: NSObject {
             if self.isHeadphonesConnected && backend.isPlaying && micActive {
                 Logger.shared.log("Mic became active during playback -> pause")
                 backend.pause()
-                self.notify(title: "Focus Music Paused", body: "Microphone is now in use (call started).")
+                self.notify(title: "Nik Music Paused", body: "Microphone is now in use (call started).")
                 self.updateMenu()
             } else if self.isHeadphonesConnected && !backend.isPlaying && !micActive && !self.isManuallyPaused {
                 Logger.shared.log("Mic free, resuming playback")
@@ -738,10 +738,10 @@ class FocusMusicController: NSObject {
         if isHeadphonesConnected && !wasConnected {
             Logger.shared.log("Headphones connected!")
             if !isMicInUse() {
-                notify(title: "🎧 Focus Music", body: "Headphones detected. Starting your focus session.")
+                notify(title: "🎧 Nik Music", body: "Headphones detected. Starting your focus session.")
                 backend?.play()
             } else {
-                notify(title: "🎧 Focus Music", body: "Headphones detected, but you're in a call. Auto-play will resume when the mic is free.")
+                notify(title: "🎧 Nik Music", body: "Headphones detected, but you're in a call. Auto-play will resume when the mic is free.")
             }
         } else if !isHeadphonesConnected && wasConnected {
             Logger.shared.log("Headphones disconnected!")
@@ -789,7 +789,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         NSUserNotificationCenter.default.delegate = self
-        FocusMusicController.shared.setup()
+        NikMusicController.shared.setup()
     }
 
     func userNotificationCenter(_ center: NSUserNotificationCenter, shouldPresent notification: NSUserNotification) -> Bool {

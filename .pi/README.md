@@ -2,7 +2,7 @@
 
 ## Project
 
-**FocusMusic** — A macOS menu-bar utility that automatically plays focus music when headphones are connected, and pauses during calls.
+**Nik-Music** — A macOS menu-bar utility that automatically plays music when headphones are connected, and pauses during calls.
 
 ## Current State
 
@@ -13,38 +13,34 @@ Single-file Swift app (`main.swift`) using AppKit + CoreAudio + AVFoundation + M
 - **Protocol-based backends** (`MusicBackend`):
   - `LocalBackend` — `AVAudioPlayer` + shuffled playlist from `~/Music/Focus`
   - `SpotifyBackend` — `NSAppleScript` controlling Spotify desktop app + optional `SpotifyAPIClient` for search auto-play
-- **Config system** — JSON at `~/.focusmusic.json` with `source`, `musicFolder`, `shuffle`, `spotifyUri`, `spotifySearchQuery`, `spotifyClientId`, `spotifyClientSecret`
-- **Menu bar** — `NSStatusBar` with Source submenu (radio buttons), play/pause/skip, open folder, quit
+- **Config system** — JSON at `~/.nikmusic.json`
+- **Menu bar** — `NSStatusBar` with Source submenu, play/pause/skip, open folder, quit
 - **Headphone detection** — CoreAudio listener + 2s polling fallback
-- **Call detection** — Mic usage polling (`kAudioDevicePropertyDeviceIsRunningSomewhere`)
-- **Media keys** — `MPRemoteCommandCenter` handlers forward to active backend
-- **LaunchAgent** — `com.rightsum.focusmusic` with `LimitLoadToSessionType: Aqua`
-- **Logs** — `~/.focusmusic.log`
-- **Zero permissions** — no Accessibility, no special entitlements needed
+- **Call detection** — Mic usage polling
+- **Media keys** — `MPRemoteCommandCenter`
+- **LaunchAgent** — `com.rightsum.nikmusic`
+- **Logs** — `~/.nikmusic.log`
+- **Zero permissions** — no Accessibility needed
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
 | `main.swift` | Complete source (~800 lines) |
-| `build/FocusMusic` | Compiled binary |
+| `build/NikMusic` | Compiled binary |
 | `install.sh` | Build + install + LaunchAgent + default config |
 | `uninstall.sh` | Remove binary + config + LaunchAgent |
 | `assets/` | Screenshots |
 
 ### Known Issues / TODO
 
-- [ ] `NSUserNotification` is deprecated (macOS 11+); migrate to `UserNotifications.framework`
-- [ ] Could be wrapped as a proper `.app` bundle for better GUI session handling
-- [ ] Media key conflicts with Spotify/Apple Music when they were last "Now Playing" app
+- [ ] `NSUserNotification` is deprecated; migrate to `UserNotifications.framework`
+- [ ] Could be wrapped as a proper `.app` bundle
+- [ ] Media key conflicts with Spotify/Apple Music
 - [ ] No volume control from the app
-- [ ] No playlist persistence in local mode (reshuffles on launch)
+- [ ] No playlist persistence in local mode
 - [ ] No support for other streaming apps (Apple Music, Tidal, etc.)
 
-### Architecture Decisions
+### Etymology
 
-- **Why protocol-based backends?** User wanted configurable support for Spotify without rewriting core headphone/call detection logic.
-- **Why AppleScript for Spotify?** Spotify has a rich, reliable AppleScript dictionary. Direct and stable.
-- **Why not YouTube Music?** Removed because it required Accessibility permissions and keyboard simulation was flaky. User preferred clean, permission-free experience.
-- **Why `MPRemoteCommandCenter` for media keys?** It's the official API. No private SPI needed.
-- **Why raw binary + LaunchAgent instead of .app?** Faster iteration, no Xcode project. Trade-off: occasional menu bar visibility quirks.
+**Nik** (نیک) — Persian word meaning "good," "virtuous." From Zoroastrian *Humata, Hukhta, Huvarshta* (Good Thoughts, Good Words, Good Deeds). The app's philosophy: remove friction from your daily music ritual.
