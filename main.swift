@@ -294,37 +294,50 @@ class YouTubeMusicBackend: NSObject, MusicBackend {
 
     private func isAppRunning() -> Bool {
         let apps = NSWorkspace.shared.runningApplications
-        return apps.contains { $0.localizedName == "YouTube Music" }
+        // Check by localized name (works for native apps)
+        let byName = apps.contains { $0.localizedName == "YouTube Music" }
+        // Check by bundle ID (more reliable for Chrome Apps)
+        let byBundle = apps.contains { $0.bundleIdentifier?.hasPrefix("com.google.Chrome.app.") ?? false }
+        return byName || byBundle
     }
 
     func play() {
-        if let urlString = config.youtubeMusicUrl, !urlString.isEmpty {
-            // Open a specific playlist/album URL in the YouTube Music app
-            let task = Process()
-            task.launchPath = "/usr/bin/open"
-            task.arguments = ["-a", "YouTube Music", urlString]
-            try? task.run()
-            _isPlaying = true
-            Logger.shared.log("YouTube Music: opening URL \(urlString)")
-            return
+        // First, ensure the app is active/focused
+        if !isAppRunning() {
+            if let urlString = config.youtubeMusicUrl, !urlString.isEmpty {
+                Logger.shared.log("YouTube Music: opening URL \(urlString)")
+                let task = Process()
+                task.launchPath = "/usr/bin/open"
+                task.arguments = ["-a", "YouTube Music", urlString]
+                try? task.run()
+            } else {
+                Logger.shared.log("YouTube Music: launching app")
+                runScript("tell application \"YouTube Music\" to activate")
+            }
+        } else {
+            // App is already running — bring to front
+            Logger.shared.log("YouTube Music: bringing to front")
+            runScript("tell application \"YouTube Music\" to activate")
         }
 
-        // Fallback: activate and press space
-        runScript("tell application \"YouTube Music\" to activate")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        // Wait for page/app to be ready, then send spacebar to play
+        // Chrome Apps need ~2.5s to fully load a playlist page
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
             self?.sendKey(49) // Space
+            Logger.shared.log("YouTube Music: sent spacebar to play")
         }
         _isPlaying = true
-        Logger.shared.log("YouTube Music: play (spacebar)")
     }
 
     func pause() {
-        // Don't activate — if the app is closed, there's nothing to pause
-        if isAppRunning() {
-            sendKey(49) // Space
+        if !isAppRunning() {
+            Logger.shared.log("YouTube Music: pause skipped — app not running")
+            _isPlaying = false
+            return
         }
+        sendKey(49) // Space
         _isPlaying = false
-        Logger.shared.log("YouTube Music: pause")
+        Logger.shared.log("YouTube Music: pause (spacebar)")
     }
 
     func stop() {
