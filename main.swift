@@ -8,13 +8,11 @@ import MediaPlayer
 enum MusicSource: String, Codable, CaseIterable {
     case local = "local"
     case spotify = "spotify"
-    case youtubeMusic = "youtubeMusic"
 
     var displayName: String {
         switch self {
         case .local: return "Local Files"
         case .spotify: return "Spotify"
-        case .youtubeMusic: return "YouTube Music"
         }
     }
 }
@@ -27,8 +25,6 @@ struct AppConfig: Codable {
     var spotifySearchQuery: String? = nil
     var spotifyClientId: String? = nil
     var spotifyClientSecret: String? = nil
-    var youtubeMusicUrl: String? = nil
-    var youtubeMusicSearchQuery: String? = nil
 }
 
 class ConfigManager {
@@ -77,7 +73,7 @@ class Logger {
     }
 }
 
-// MARK: - Spotify API Client (optional, for auto-play search)
+// MARK: - Spotify API Client
 
 class SpotifyAPIClient {
     private var cachedToken: String?
@@ -93,7 +89,6 @@ class SpotifyAPIClient {
     }
 
     private func fetchToken(clientId: String, clientSecret: String) -> String? {
-        // Use cached token if still valid
         if let token = cachedToken, let expiry = tokenExpiry, Date() < expiry {
             return token
         }
@@ -128,7 +123,7 @@ class SpotifyAPIClient {
             }
             result = token
             self.cachedToken = token
-            self.tokenExpiry = Date().addingTimeInterval(expiresIn - 60) // 1 min buffer
+            self.tokenExpiry = Date().addingTimeInterval(expiresIn - 60)
             semaphore.signal()
         }
         task.resume()
@@ -161,7 +156,6 @@ class SpotifyAPIClient {
                 semaphore.signal()
                 return
             }
-            // Debug: log raw total and first few item types
             if let playlists = json["playlists"] as? [String: Any] {
                 let total = playlists["total"] as? Int ?? -1
                 let rawItems = playlists["items"] as? [Any] ?? []
@@ -200,7 +194,7 @@ protocol MusicBackend: AnyObject {
     var currentTrackName: String? { get }
 }
 
-// MARK: - Local Backend (AVAudioPlayer)
+// MARK: - Local Backend
 
 class LocalBackend: NSObject, MusicBackend, AVAudioPlayerDelegate {
     var player: AVAudioPlayer?
@@ -304,7 +298,7 @@ class LocalBackend: NSObject, MusicBackend, AVAudioPlayerDelegate {
     }
 }
 
-// MARK: - Spotify Backend (AppleScript + optional Web API)
+// MARK: - Spotify Backend
 
 class SpotifyBackend: NSObject, MusicBackend {
     var config: AppConfig
@@ -333,13 +327,9 @@ class SpotifyBackend: NSObject, MusicBackend {
         // Reload config to pick up edits made while disconnected
         config = ConfigManager.shared.load()
 
-        // On headphone connect, user WANTS music to start.
-        // If app is closed, open it. Only skip if we're in a background loop
-        // (e.g. mic-poll resume) and user intentionally closed it.
         if !isAppRunning() {
             Logger.shared.log("Spotify: launching app")
             _ = runScript("tell application \"Spotify\" to activate")
-            // Wait for app to launch before sending commands
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 self?.executePlay()
             }
@@ -351,16 +341,13 @@ class SpotifyBackend: NSObject, MusicBackend {
     private func executePlay() {
         // Priority 1: explicit URI
         if let uri = config.spotifyUri, !uri.isEmpty {
-            Logger.shared.log("Spotify: opening explicit URI \(uri)")
-            _ = runScript("tell application \"Spotify\" to open location \"\(uri)\"")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                _ = self?.runScript("tell application \"Spotify\" to play")
-                Logger.shared.log("Spotify: play after URI load")
-            }
+            Logger.shared.log("Spotify: playing explicit URI \(uri)")
+            let result = runScript("tell application \"Spotify\" to play track \"\(uri)\"")
+            if let r = result { Logger.shared.log("Spotify: result '\(r)'") }
             return
         }
 
-        // Priority 2: search query with API credentials -> auto-play first result
+        // Priority 2: search query with API credentials
         if let query = config.spotifySearchQuery, !query.isEmpty,
            let clientId = config.spotifyClientId, !clientId.isEmpty,
            let clientSecret = config.spotifyClientSecret, !clientSecret.isEmpty {
@@ -370,10 +357,8 @@ class SpotifyBackend: NSObject, MusicBackend {
                 if let uri = self.apiClient.searchFirstPlaylist(query: query, clientId: clientId, clientSecret: clientSecret) {
                     DispatchQueue.main.async {
                         Logger.shared.log("Spotify: playing search result \(uri)")
-                        _ = self.runScript("tell application \"Spotify\" to open location \"\(uri)\"")
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                            _ = self.runScript("tell application \"Spotify\" to play")
-                        }
+                        let result = self.runScript("tell application \"Spotify\" to play track \"\(uri)\"")
+                        if let r = result { Logger.shared.log("Spotify: result '\(r)'") }
                     }
                 } else {
                     DispatchQueue.main.async {
@@ -385,7 +370,7 @@ class SpotifyBackend: NSObject, MusicBackend {
             return
         }
 
-        // Priority 3: search query without API credentials -> open search page
+        // Priority 3: search query without API credentials
         if let query = config.spotifySearchQuery, !query.isEmpty {
             let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? query
             let searchUri = "spotify:search:\(encoded)"
@@ -447,161 +432,6 @@ class SpotifyBackend: NSObject, MusicBackend {
     }
 }
 
-// MARK: - YouTube Music Backend (AppleScript + System Events)
-
-class YouTubeMusicBackend: NSObject, MusicBackend {
-    var config: AppConfig
-    private var _isPlaying = false
-
-    init(config: AppConfig) {
-        self.config = config
-    }
-
-    private func runScript(_ source: String) -> String? {
-        let script = NSAppleScript(source: source)
-        var errorInfo: NSDictionary?
-        let result = script?.executeAndReturnError(&errorInfo)
-        if let error = errorInfo {
-            Logger.shared.log("AppleScript error: \(error)")
-            if let num = error["NSAppleScriptErrorNumber"] as? Int, num == -1002 || num == 1002 {
-                showAccessibilityAlert()
-            }
-        }
-        return result?.stringValue
-    }
-
-    private func showAccessibilityAlert() {
-        let notification = NSUserNotification()
-        notification.title = "🔐 Accessibility Required"
-        notification.informativeText = "FocusMusic needs Accessibility permissions to control YouTube Music. Click to open System Settings."
-        notification.hasActionButton = true
-        notification.actionButtonTitle = "Open Settings"
-        notification.userInfo = ["openAccessibility": true]
-        NSUserNotificationCenter.default.deliver(notification)
-    }
-
-    private func sendKey(_ keyCode: Int, shift: Bool = false) {
-        if shift {
-            runScript("""
-                tell application "System Events"
-                    key code \(keyCode) using shift down
-                end tell
-            """)
-        } else {
-            runScript("""
-                tell application "System Events"
-                    key code \(keyCode)
-                end tell
-            """)
-        }
-    }
-
-    private func isAppRunning() -> Bool {
-        let apps = NSWorkspace.shared.runningApplications
-        let byName = apps.contains { $0.localizedName == "YouTube Music" }
-        let byBundle = apps.contains { $0.bundleIdentifier?.hasPrefix("com.google.Chrome.app.") ?? false }
-        return byName || byBundle
-    }
-
-    func play() {
-        // Reload config to pick up edits made while disconnected
-        config = ConfigManager.shared.load()
-
-        // On headphone connect, user WANTS music to start.
-        // If app is closed, open it. Only skip on background pause/stop.
-        if !isAppRunning() {
-            // Priority 1: explicit URL
-            if let urlString = config.youtubeMusicUrl, !urlString.isEmpty {
-                Logger.shared.log("YouTube Music: launching app with URL \(urlString)")
-                let task = Process()
-                task.launchPath = "/usr/bin/open"
-                task.arguments = ["-a", "YouTube Music", urlString]
-                try? task.run()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                    self?.sendKey(49) // Space
-                    Logger.shared.log("YouTube Music: sent spacebar after URL open")
-                }
-                _isPlaying = true
-                return
-            }
-            // Priority 2: search query
-            if let query = config.youtubeMusicSearchQuery, !query.isEmpty {
-                let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-                let searchUrl = "https://music.youtube.com/search?q=\(encoded)"
-                Logger.shared.log("YouTube Music: launching app with search \(searchUrl)")
-                let task = Process()
-                task.launchPath = "/usr/bin/open"
-                task.arguments = ["-a", "YouTube Music", searchUrl]
-                try? task.run()
-                _isPlaying = true
-                return
-            }
-            // Priority 3: just launch and play
-            Logger.shared.log("YouTube Music: launching app")
-            runScript("tell application \"YouTube Music\" to activate")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                self?.sendKey(49) // Space
-                Logger.shared.log("YouTube Music: sent spacebar to play")
-            }
-            _isPlaying = true
-            return
-        }
-
-        // App is already running — bring to front and play
-        Logger.shared.log("YouTube Music: bringing to front")
-        runScript("tell application \"YouTube Music\" to activate")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.sendKey(49) // Space
-            Logger.shared.log("YouTube Music: sent spacebar to play")
-        }
-        _isPlaying = true
-    }
-
-    func pause() {
-        if !isAppRunning() {
-            Logger.shared.log("YouTube Music: pause skipped — app not running")
-            _isPlaying = false
-            return
-        }
-        sendKey(49) // Space
-        _isPlaying = false
-        Logger.shared.log("YouTube Music: pause (spacebar)")
-    }
-
-    func stop() {
-        _isPlaying = false
-        Logger.shared.log("YouTube Music: stopped (no-op, app stays closed)")
-    }
-
-    func nextTrack() {
-        if !isAppRunning() {
-            runScript("tell application \"YouTube Music\" to activate")
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.sendKey(45, shift: true) // Shift+N
-        }
-        Logger.shared.log("YouTube Music: next (Shift+N)")
-    }
-
-    func previousTrack() {
-        if !isAppRunning() {
-            runScript("tell application \"YouTube Music\" to activate")
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.sendKey(35, shift: true) // Shift+P
-        }
-        Logger.shared.log("YouTube Music: previous (Shift+P)")
-    }
-
-    var isPlaying: Bool {
-        return _isPlaying
-    }
-
-    var currentTrackName: String? {
-        return nil
-    }
-}
-
 // MARK: - FocusMusicController
 
 class FocusMusicController: NSObject {
@@ -620,8 +450,6 @@ class FocusMusicController: NSObject {
         "in-ear", "skullcandy", "anker", "pixel buds", "galaxy buds",
         "wh-", "xm5", "xm4", "xm3", "over-ear", "bluetooth headset"
     ]
-
-    // MARK: - Setup
 
     func setup() {
         Logger.shared.log("=== FocusMusic starting ===")
@@ -644,9 +472,6 @@ class FocusMusicController: NSObject {
         case .spotify:
             backend = SpotifyBackend(config: config)
             clearNowPlayingInfo()
-        case .youtubeMusic:
-            backend = YouTubeMusicBackend(config: config)
-            clearNowPlayingInfo()
         }
         Logger.shared.log("Backend: \(config.source.displayName)")
     }
@@ -667,8 +492,6 @@ class FocusMusicController: NSObject {
     func clearNowPlayingInfo() {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
-
-    // MARK: - Media Keys
 
     func setupMediaKeys() {
         let center = MPRemoteCommandCenter.shared()
@@ -696,8 +519,6 @@ class FocusMusicController: NSObject {
         }
         Logger.shared.log("Media keys registered")
     }
-
-    // MARK: - Menu Bar
 
     var nowPlayingItem: NSMenuItem!
     var playPauseItem: NSMenuItem!
@@ -732,7 +553,6 @@ class FocusMusicController: NSObject {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Source submenu
         let sourceMenu = NSMenu(title: "Source")
         for source in MusicSource.allCases {
             let item = NSMenuItem(title: source.displayName, action: #selector(selectSource(_:)), keyEquivalent: "")
@@ -830,8 +650,6 @@ class FocusMusicController: NSObject {
         NSApplication.shared.terminate(nil)
     }
 
-    // MARK: - Notifications
-
     func notify(title: String, body: String) {
         Logger.shared.log("Notify: \(title) - \(body)")
         let notification = NSUserNotification()
@@ -840,8 +658,6 @@ class FocusMusicController: NSObject {
         notification.soundName = nil
         NSUserNotificationCenter.default.deliver(notification)
     }
-
-    // MARK: - Mic / Call Detection
 
     func startPolling() {
         Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
@@ -884,8 +700,6 @@ class FocusMusicController: NSObject {
         let result2 = AudioObjectGetPropertyData(inputDeviceID, &address, 0, nil, &size, &isRunning)
         return result2 == noErr && isRunning != 0
     }
-
-    // MARK: - Audio Device Listening
 
     func startOutputDeviceListener() {
         var propertyAddress = AudioObjectPropertyAddress(
@@ -980,13 +794,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
 
     func userNotificationCenter(_ center: NSUserNotificationCenter, shouldPresent notification: NSUserNotification) -> Bool {
         return true
-    }
-
-    func userNotificationCenter(_ center: NSUserNotificationCenter, didActivate notification: NSUserNotification) {
-        if notification.userInfo?["openAccessibility"] != nil {
-            let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-            NSWorkspace.shared.open(url)
-        }
     }
 }
 
